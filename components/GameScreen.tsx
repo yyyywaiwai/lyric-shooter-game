@@ -1016,7 +1016,6 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             state.enemyProjectiles = state.enemyProjectiles.filter(enemyP => {
                  if (playerP.x < enemyP.x + enemyP.width && playerP.x + playerP.width > enemyP.x && playerP.y < enemyP.y + enemyP.height && playerP.y + playerP.height > enemyP.y) {
                     hitEnemyP = true;
-                    playCancelSound();
                     return false;
                  }
                  return true;

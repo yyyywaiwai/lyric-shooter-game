@@ -264,6 +264,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       isGameOverDelayed: false,
       gameOverDelayEndTime: 0,
       shouldHidePlayer: false, // プレイヤーを非表示にするフラグ
+      showGameOverText: false, // ゲームオーバーテキスト表示フラグ
   });
 
   const [, forceUpdate] = useState(0);
@@ -405,6 +406,36 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.2);
+  }, []);
+
+  const fadeOutBgm = useCallback((duration: number) => {
+      const gainNode = bgmGainRef.current;
+      const context = audioContextRef.current;
+      const audio = audioRef.current;
+      if (!gainNode || !context || !audio) return;
+      
+      const now = context.currentTime;
+      
+      // Volume fade out
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.linearRampToValueAtTime(0, now + duration);
+      
+      // Pitch fade out (playback rate)
+      const startRate = audio.playbackRate;
+      const endRate = 0.3; // Final pitch (much lower)
+      const steps = 40; // Number of steps for smooth transition
+      const stepDuration = (duration * 1000) / steps;
+      
+      let currentStep = 0;
+      const pitchInterval = setInterval(() => {
+          if (!audio || currentStep >= steps) {
+              clearInterval(pitchInterval);
+              return;
+          }
+          const progress = currentStep / steps;
+          audio.playbackRate = startRate - (startRate - endRate) * progress;
+          currentStep++;
+      }, stepDuration);
   }, []);
     
   const handleSkip = useCallback(() => {
@@ -1009,8 +1040,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         if (state.lives <= 0) {
             // ゲームオーバー遅延状態に設定
             state.isGameOverDelayed = true;
-            state.gameOverDelayEndTime = Date.now() + 1300; // 撃墜音の長さ(1.2秒) + 少しのマージン
+            state.gameOverDelayEndTime = Date.now() + 5000; // 5秒後にリザルト画面へ
             state.shouldHidePlayer = true; // 撃墜直後にプレイヤーを非表示
+            state.showGameOverText = true; // ゲームオーバーテキストを即座に表示
+            fadeOutBgm(4); // 4秒かけてBGMフェードアウト
         } else {
             state.isRespawning = true;
             state.respawnEndTime = Date.now() + RESPAWN_DURATION;
@@ -1137,7 +1170,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     // Force re-render
     forceUpdate(c => c + 1);
     gameLoopId.current = requestAnimationFrame(gameLoop);
-  }, [lyrics, totalChars, totalLyricLines, endGame, superHardMode, handleSkip, playShipHitSound, playCancelSound, playBombSound, activateSpecialItem]);
+  }, [lyrics, totalChars, totalLyricLines, endGame, superHardMode, handleSkip, playShipHitSound, playCancelSound, playBombSound, activateSpecialItem, fadeOutBgm]);
 
   useEffect(() => {
     let hasSetupAudio = false;
@@ -1188,7 +1221,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
   }, [gameLoop, setupAudio, activateSpecialItem, handleSkip]);
   
-  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate } = gameStateRef.current;
+  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate, showGameOverText } = gameStateRef.current;
   const isLastStand = lives === 1;
 
   const getStockedItemIcon = (itemType: SpecialWeapon) => {
@@ -1337,6 +1370,15 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       )}
 
       {isLastStand && <div className="absolute inset-0 border-4 border-red-500 rounded-none pointer-events-none animate-pulse box-shadow-last-stand"></div>}
+
+      {/* Game Over Display */}
+      {showGameOverText && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+          <h1 className="text-8xl font-orbitron font-bold text-red-500 animate-pulse text-center drop-shadow-2xl">
+            GAME OVER
+          </h1>
+        </div>
+      )}
 
     </div>
   );

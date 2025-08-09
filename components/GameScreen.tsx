@@ -26,6 +26,7 @@ const ITEM_SPAWN_PERCENTAGE = 0.10; // 10%
 const INITIAL_LIVES = 5;
 const RESPAWN_DURATION = 1500;
 const INVINCIBILITY_DURATION = 3000;
+const CANCELLER_INVINCIBILITY_DURATION = 500; // 0.5 seconds for canceller shot
 const LASER_DURATION = 5000;
 const EXPLOSION_DURATION = 400;
 const BGM_VOLUME = 0.3;
@@ -952,6 +953,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
              cancellerNullified = true;
              playCancelSound();
              state.floatingTexts.push({ id: Date.now(), x: state.playerX, y: state.playerY, text: 'GUARD!', createdAt: Date.now() });
+             
+             // Add 0.5 second invincibility after canceller activation
+             state.isInvincible = true;
+             state.invincibilityEndTime = Date.now() + CANCELLER_INVINCIBILITY_DURATION;
         }
 
         if(cancellerNullified) return;

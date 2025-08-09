@@ -167,10 +167,7 @@ All gameplay parameters (speeds, dimensions, cooldowns) are defined at the top o
 ## 🔮 Future Enhancements
 
 - Multiple audio format support (MP3, FLAC, etc.)
-- Online multiplayer mode
-- Custom theme and visual effect options
 - Leaderboard system
-- Mobile touch controls
 - WebGL rendering for enhanced effects
 
 ## 🤝 Contributing

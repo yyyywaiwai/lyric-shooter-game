@@ -1262,8 +1262,12 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       </div>
       
       <div className="absolute top-2 left-1/2 -translate-x-1/2 w-1/2">
-        <div className="w-full bg-slate-800 rounded-full h-2.5 border-2 border-slate-600 overflow-hidden">
-            <div className={`${progressColorClass} h-2 rounded-full transition-all duration-200`} style={{width: `${songProgressPercentage}%`}}></div>
+        <div className="relative w-full bg-slate-700 rounded-full h-4 border-2 border-slate-500 overflow-hidden">
+            <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-slate-400 opacity-50 z-10"></div>
+            <div className={`${progressColorClass} h-full rounded-full transition-all duration-200`} style={{ width: `${songProgressPercentage}%` }}></div>
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white text-shadow-md">
+                {Math.floor(songProgressPercentage)}%
+            </div>
         </div>
       </div>
 

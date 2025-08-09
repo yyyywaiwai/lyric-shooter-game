@@ -2,7 +2,21 @@ import React, { useState, useCallback } from 'react';
 import { LyricLine, SongMetadata } from '../types';
 import { parseLRC } from '../services/lrcParser';
 import { UploadIcon } from './icons';
-import * as mm from 'music-metadata-browser';
+
+// Load jsmediatags from CDN
+const loadJsMediaTags = () => {
+  return new Promise((resolve) => {
+    if ((window as any).jsmediatags) {
+      resolve((window as any).jsmediatags);
+      return;
+    }
+    
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js';
+    script.onload = () => resolve((window as any).jsmediatags);
+    document.head.appendChild(script);
+  });
+};
 
 interface FileUploaderProps {
   onFilesLoaded: (audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => void;
@@ -55,17 +69,60 @@ export default function FileUploader({ onFilesLoaded }: FileUploaderProps): Reac
       }
       
       let metadata: SongMetadata = { title: m4aFile.name.replace(/\.m4a$/, '') };
+      
       try {
-        const parsedMetadata = await mm.parseBlob(m4aFile);
-        if(parsedMetadata.common.title) {
-            metadata.title = parsedMetadata.common.title;
+        console.log('Attempting to parse metadata with jsmediatags for file:', m4aFile.name);
+        
+        // Load jsmediatags library
+        const jsmediatagsLib = await loadJsMediaTags();
+        
+        const tags = await new Promise((resolve, reject) => {
+          (jsmediatagsLib as any).read(m4aFile, {
+            onSuccess: (tag: any) => {
+              console.log('Successfully parsed metadata:', tag);
+              resolve(tag);
+            },
+            onError: (error: any) => {
+              console.error('jsmediatags error:', error);
+              reject(error);
+            }
+          });
+        }) as any;
+        
+        console.log('Tags:', tags);
+        console.log('Tags.tags:', tags.tags);
+        
+        // Extract title
+        if (tags.tags.title) {
+          console.log('Found title:', tags.tags.title);
+          metadata.title = tags.tags.title;
+        } else {
+          console.log('No title found, using filename fallback');
         }
-        if(parsedMetadata.common.picture && parsedMetadata.common.picture.length > 0) {
-            const picture = parsedMetadata.common.picture[0];
-            metadata.picture = `data:${picture.format};base64,${picture.data.toString('base64')}`;
+        
+        // Extract album art
+        if (tags.tags.picture) {
+          console.log('Found album art');
+          const picture = tags.tags.picture;
+          console.log('Picture format:', picture.format, 'Size:', picture.data.length);
+          
+          try {
+            // Convert picture data to base64
+            const base64String = Array.from(picture.data)
+              .map(byte => String.fromCharCode(byte))
+              .join('');
+            metadata.picture = `data:${picture.format};base64,${btoa(base64String)}`;
+            console.log('Album art processed successfully');
+          } catch (pictureError) {
+            console.error('Error processing album art:', pictureError);
+          }
+        } else {
+          console.log('No album art found');
         }
+        
+        console.log('Final metadata with jsmediatags:', metadata);
       } catch (metaError) {
-        console.warn("Could not parse music metadata:", metaError);
+        console.error("Could not parse music metadata with jsmediatags:", metaError);
         // Fallback to filename is already set
       }
 

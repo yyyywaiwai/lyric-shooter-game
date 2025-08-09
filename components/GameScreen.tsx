@@ -252,6 +252,11 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       isGameEnding: false,
       showSkip: true,
       spacePressProgress: 0,
+      // Enemy spawn rate tracking
+      totalEnemiesSpawned: 0,
+      gameStartTime: 0,
+      currentEnemySpawnRate: 0,
+      lastSpawnRateUpdate: 0,
       // Super Hard Mode state
       isMidGameBuffActive: false,
       enemyProjectileSpeedMultiplier: 1,
@@ -487,6 +492,16 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
     } else if (spacebarPressStart.current === 0 && state.spacePressProgress > 0) {
         state.spacePressProgress = 0;
+    }
+
+    // --- Update Enemy Spawn Rate (every 1 second) ---
+    const spawnRateUpdateTime = Date.now();
+    if (spawnRateUpdateTime - state.lastSpawnRateUpdate >= 1000) {
+        if (state.gameStartTime > 0) {
+            const elapsedTimeSeconds = (spawnRateUpdateTime - state.gameStartTime) / 1000;
+            state.currentEnemySpawnRate = elapsedTimeSeconds > 0 ? state.totalEnemiesSpawned / elapsedTimeSeconds : 0;
+        }
+        state.lastSpawnRateUpdate = spawnRateUpdateTime;
     }
     
     // --- Player Movement ---
@@ -837,6 +852,16 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             setTimeout(spawnChar, spawnInterval);
           }
         };
+        // Track enemy spawn rate
+        const enemyCount = line.length;
+        state.totalEnemiesSpawned += enemyCount;
+        
+        // Initialize game start time
+        const now = Date.now();
+        if (state.gameStartTime === 0) {
+          state.gameStartTime = now;
+        }
+        
         spawnChar();
         state.currentLyricIndex++;
       }
@@ -1152,7 +1177,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
   }, [gameLoop, setupAudio, activateSpecialItem, handleSkip]);
   
-  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer } = gameStateRef.current;
+  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate } = gameStateRef.current;
   const isLastStand = lives === 1;
 
   const getStockedItemIcon = (itemType: SpecialWeapon) => {
@@ -1262,6 +1287,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         <div className="text-right">
             <p className="text-xl">SCORE: {score}</p>
             <p className="text-sm">DEFEATED: {enemiesDefeated} / {totalChars}</p>
+            <p className="text-sm">E.RATE: {currentEnemySpawnRate.toFixed(1)}/s</p>
         </div>
       </div>
       

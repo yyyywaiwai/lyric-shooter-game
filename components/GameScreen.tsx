@@ -254,6 +254,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       // Super Hard Mode state
       isMidGameBuffActive: false,
       enemyProjectileSpeedMultiplier: 1,
+      // Game Over delay state
+      isGameOverDelayed: false,
+      gameOverDelayEndTime: 0,
+      shouldHidePlayer: false, // プレイヤーを非表示にするフラグ
   });
 
   const [, forceUpdate] = useState(0);
@@ -295,18 +299,46 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     }
   }, [initialItem]);
 
-  const setupAudio = useCallback(() => {
+  const setupAudio = useCallback(async () => {
     if (!audioRef.current || audioContextRef.current) return;
-    const context = new (window.AudioContext || (window as any).webkitAudioContext)();
-    audioContextRef.current = context;
-    const source = context.createMediaElementSource(audioRef.current);
-    const gainNode = context.createGain();
-    bgmSourceRef.current = source;
-    bgmGainRef.current = gainNode;
-    source.connect(gainNode);
-    gainNode.connect(context.destination);
-    gainNode.gain.setValueAtTime(BGM_VOLUME, context.currentTime);
-    audioRef.current.play().catch(e => console.error("Audio playback failed:", e));
+    
+    try {
+      // AudioContextは最初はsuspendedになる可能性があるので、resumeを待つ
+      const context = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = context;
+      
+      // ユーザーインタラクション後にresume
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
+      
+      const source = context.createMediaElementSource(audioRef.current);
+      const gainNode = context.createGain();
+      bgmSourceRef.current = source;
+      bgmGainRef.current = gainNode;
+      source.connect(gainNode);
+      gainNode.connect(context.destination);
+      gainNode.gain.setValueAtTime(BGM_VOLUME, context.currentTime);
+      
+      // 音声要素のボリュームも設定
+      audioRef.current.volume = BGM_VOLUME;
+      
+      // 音声再生を試行
+      await audioRef.current.play();
+      console.log("Audio playback started successfully");
+    } catch (error) {
+      console.error("Audio setup or playback failed:", error);
+      // フォールバック: 通常の音声要素のみ使用
+      if (audioRef.current) {
+        audioRef.current.volume = BGM_VOLUME;
+        try {
+          await audioRef.current.play();
+          console.log("Fallback audio playback started");
+        } catch (fallbackError) {
+          console.error("Fallback audio playback failed:", fallbackError);
+        }
+      }
+    }
   }, []);
   
   const duckBgm = useCallback((duration: number) => {
@@ -382,8 +414,9 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
   const endGame = useCallback((status: 'cleared' | 'gameOver') => {
       const state = gameStateRef.current;
-      if (state.isGameEnding) return;
-      state.isGameEnding = true;
+      // ゲームオーバー遅延処理から呼ばれた場合は、既にisGameEndingがtrueになっている
+      if (status === 'cleared' && state.isGameEnding) return;
+      if (status === 'gameOver' && !state.isGameEnding) state.isGameEnding = true;
       if (gameLoopId.current !== null) cancelAnimationFrame(gameLoopId.current);
       if (audioRef.current) audioRef.current.pause();
 
@@ -501,6 +534,24 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
     // --- Timers & State Updates ---
     const currentTime = Date.now();
+    
+    // ゲームオーバー遅延チェック
+    if (state.isGameOverDelayed && currentTime > state.gameOverDelayEndTime) {
+        // App.tsxの状態のみ変更し、ゲームループは停止させない
+        const songProgressPercentage = totalLyricLines > 0 ? (state.currentLyricIndex / totalLyricLines) * 100 : 100;
+        const stats = {
+            score: state.score,
+            enemiesDefeated: state.enemiesDefeated,
+            totalEnemies: totalChars,
+            itemsCollected: state.itemsCollected,
+            songProgressPercentage,
+        };
+        if (audioRef.current) audioRef.current.pause();
+        onEndGameRef.current(stats, 'gameOver');
+        return;
+    }
+    
+    
     if (state.isRespawning && currentTime > state.respawnEndTime) {
         state.isRespawning = false;
         state.isInvincible = true;
@@ -892,7 +943,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
 
     const takeHit = () => {
-        if (state.isInvincible || state.isRespawning) return;
+        if (state.isInvincible || state.isRespawning || state.isGameEnding || state.isGameOverDelayed) return;
         
         // Canceller Shot damage nullification
         let cancellerNullified = false;
@@ -915,7 +966,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
         
         if (state.lives <= 0) {
-            endGame('gameOver');
+            // ゲームオーバー遅延状態に設定
+            state.isGameOverDelayed = true;
+            state.gameOverDelayEndTime = Date.now() + 1300; // 撃墜音の長さ(1.2秒) + 少しのマージン
+            state.shouldHidePlayer = true; // 撃墜直後にプレイヤーを非表示
         } else {
             state.isRespawning = true;
             state.respawnEndTime = Date.now() + RESPAWN_DURATION;
@@ -1046,9 +1100,18 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   }, [lyrics, totalChars, totalLyricLines, endGame, superHardMode, handleSkip, playShipHitSound, playCancelSound, playBombSound, activateSpecialItem]);
 
   useEffect(() => {
+    let hasSetupAudio = false;
+    
     const handleKeyDown = (e: KeyboardEvent) => {
         keysPressed.current[e.key] = true;
         keysPressed.current[e.code] = true;
+        
+        // 最初のキー押下時に音声を初期化
+        if (!hasSetupAudio) {
+            hasSetupAudio = true;
+            setupAudio();
+        }
+        
         if ((e.key === ' ' || e.code === 'Spacebar') && gameStateRef.current.showSkip && spacebarPressStart.current === 0) {
             spacebarPressStart.current = Date.now();
         }
@@ -1074,7 +1137,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     
-    setupAudio();
+    // ゲームループ開始（音声はユーザーインタラクション後に初期化）
     gameLoopId.current = requestAnimationFrame(gameLoop);
 
     return () => {
@@ -1085,7 +1148,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
   }, [gameLoop, setupAudio, activateSpecialItem, handleSkip]);
   
-  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts } = gameStateRef.current;
+  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer } = gameStateRef.current;
   const isLastStand = lives === 1;
 
   const getStockedItemIcon = (itemType: SpecialWeapon) => {
@@ -1143,10 +1206,17 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
   return (
     <div className="relative bg-slate-900 border-4 border-slate-700" style={{ width: GAME_WIDTH, height: GAME_HEIGHT, userSelect: 'none', cursor: 'none', overflow: 'hidden' }}>
-      <audio ref={audioRef} src={audioUrl} />
+      <audio 
+        ref={audioRef} 
+        src={audioUrl}
+        preload="auto"
+        crossOrigin="anonymous"
+        onError={(e) => console.error("Audio load error:", e)}
+        onCanPlay={() => console.log("Audio can play")}
+      />
       
       {/* Game Objects */}
-      {!isRespawning && <PlayerComponent x={playerX} y={playerY} isInvincible={isInvincible} isLastStand={isLastStand} />}
+      {!isRespawning && !shouldHidePlayer && <PlayerComponent x={playerX} y={playerY} isInvincible={isInvincible} isLastStand={isLastStand} />}
       {enemies.map(e => <EnemyComponent key={e.id} enemy={e} isLastStand={isLastStand}/>)}
       {projectiles.map(p => <ProjectileComponent key={p.id} p={p} />)}
       {enemyProjectiles.map(p => <EnemyProjectileComponent key={p.id} p={p} />)}
@@ -1179,7 +1249,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       <div className="absolute top-0 left-0 right-0 p-3 text-white font-orbitron text-shadow-md flex justify-between items-start">
         <div className="text-left">
             <div className="flex items-center">
-                {[...Array(lives - 1)].map((_, i) => <PlayerShipIcon key={i} className={`w-6 h-6 mr-1 ${isLastStand ? 'text-red-500' : 'text-cyan-400'}`} />)}
+                {[...Array(Math.max(0, lives - 1))].map((_, i) => <PlayerShipIcon key={i} className={`w-6 h-6 mr-1 ${isLastStand ? 'text-red-500' : 'text-cyan-400'}`} />)}
             </div>
             <div className="flex items-center mt-2 space-x-1 h-6">
                 {collectedItemIcons}

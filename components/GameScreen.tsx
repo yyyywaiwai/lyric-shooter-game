@@ -990,6 +990,17 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         playShipHitSound();
         state.explosions.push({ id: Date.now() + 1, x: state.playerX + PLAYER_WIDTH/2, y: state.playerY + PLAYER_HEIGHT/2, size: 'large', createdAt: Date.now() });
         
+        // Activate bomb effect when player is destroyed (clear all on-screen enemies)
+        playBombSound();
+        const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
+        onScreenEnemies.forEach(e => {
+            state.explosions.push({ id: Date.now() + e.id, x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
+            state.score += (e.isElite || e.isBig ? 75 : 10);
+            state.enemiesDefeated++;
+        });
+        const onScreenEnemyIds = new Set(onScreenEnemies.map(e => e.id));
+        state.enemies = state.enemies.filter(e => !onScreenEnemyIds.has(e.id));
+        
         if (state.lives === 1 && !state.stockedItem) {
             state.stockedItem = Math.random() > 0.5 ? 'BOMB' : 'LASER_BEAM';
             state.floatingTexts.push({ id: Date.now(), x: state.playerX, y: state.playerY, text: 'LAST STAND!', createdAt: Date.now() });
@@ -1229,9 +1240,6 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         itemProgressPercentage = Math.max(0, Math.min(100, (progressSinceLastItem / itemSpawnThreshold) * 100));
     }
 
-    const radius = 42;
-    const circumference = 2 * Math.PI * radius;
-    const itemProgressOffset = circumference - (itemProgressPercentage / 100) * circumference;
 
   return (
     <div className="relative bg-slate-900 border-4 border-slate-700" style={{ width: GAME_WIDTH, height: GAME_HEIGHT, userSelect: 'none', cursor: 'none', overflow: 'hidden' }}>
@@ -1283,6 +1291,20 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             <div className="flex items-center mt-2 space-x-1 h-6">
                 {collectedItemIcons}
             </div>
+            {/* Special Item Slot with Progress Bar */}
+            <div className="mt-3 flex items-center space-x-2">
+                {/* Item Slot */}
+                <div className="w-12 h-12 bg-slate-800 border-2 border-slate-600 rounded-lg flex items-center justify-center" title="Special Item (SHIFT or TAB)">
+                    {stockedItem && getStockedItemIcon(stockedItem)}
+                </div>
+                {/* Vertical Progress Bar */}
+                <div className="w-1 h-12 bg-slate-600 rounded-full relative" title="Progress to next item drop">
+                    <div 
+                        className="absolute bottom-0 w-full bg-amber-400 transition-all duration-200 rounded-full"
+                        style={{ height: `${itemProgressPercentage}%` }}
+                    />
+                </div>
+            </div>
         </div>
         <div className="text-right">
             <p className="text-xl">SCORE: {score}</p>
@@ -1301,35 +1323,6 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         </div>
       </div>
 
-      <div className="absolute bottom-2 right-2 w-20 h-20" title="Special Item (SHIFT or TAB) | Progress to next item drop">
-        <svg className="w-full h-full" viewBox="0 0 100 100">
-          <circle
-            cx="50"
-            cy="50"
-            r={radius}
-            className="stroke-slate-600"
-            strokeWidth="8"
-            fill="none"
-          />
-          <circle
-            cx="50"
-            cy="50"
-            r={radius}
-            className="stroke-amber-400 transition-all duration-200"
-            strokeWidth="8"
-            fill="none"
-            strokeDasharray={circumference}
-            strokeDashoffset={itemProgressOffset}
-            strokeLinecap="round"
-            transform="rotate(-90 50 50)"
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex items-center justify-center w-16 h-16 bg-slate-800 rounded-full">
-                {stockedItem && getStockedItemIcon(stockedItem)}
-            </div>
-        </div>
-      </div>
       
       {gameStateRef.current.showSkip && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col items-center justify-center">

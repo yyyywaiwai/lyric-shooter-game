@@ -1,0 +1,6 @@
+{
+  "name": "Lyric Shooter Game",
+  "description": "A 2D shooting game where lyrics from an LRC file appear as enemies, synchronized with an M4A audio file. Upload your own M4A and LRC files to play.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

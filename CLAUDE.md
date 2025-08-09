@@ -14,8 +14,8 @@ This is a **Lyric Shooter Game** - a React/TypeScript browser-based bullet hell 
 - **Install dependencies**: `npm install`
 
 ### Environment Setup
-- Requires `.env.local` with `GEMINI_API_KEY` (currently unused in core game logic)
 - Node.js required (compatible with React 19.1.1)
+- No environment variables required for core functionality
 
 ## Architecture Overview
 
@@ -31,13 +31,22 @@ This is a **Lyric Shooter Game** - a React/TypeScript browser-based bullet hell 
 **Game Loop**: `requestAnimationFrame` in `GameScreen.tsx` for 60fps updates
 **Audio Sync**: HTML5 `<audio>` element with `currentTime` property for lyric timing
 **File Parsing**: Custom `.lrc` parser in `services/lrcParser.ts`
+**Metadata Extraction**: `jsmediatags` dynamically loaded from CDN for m4a tag reading
 **Collision Detection**: AABB (axis-aligned bounding box) collision system
 **Performance**: `React.memo` for game objects to prevent unnecessary re-renders
 
+### Critical Architecture Details
+
+**GameScreen.tsx State Management**: Uses single `gameStateRef.current` object containing all game state (player position, enemies, projectiles, items, etc.). This ref-based approach avoids React re-render performance issues during the 60fps game loop.
+
+**Enemy Spawn System**: Characters from lyrics become enemies with procedurally assigned movement patterns and shooter types. Spawn timing synchronized with audio `currentTime` and lyric timestamps.
+
+**Audio Integration**: Uses Web Audio API for sound effects (ducking, pitch shifting on game over) while HTML5 audio handles music playback. Dynamic CDN loading of `jsmediatags` library avoids Vite bundling issues.
+
 ### Directory Structure
 - `App.tsx` - Main component, game state management, UI screens
-- `components/GameScreen.tsx` - Core game loop, collision detection, enemy/projectile logic
-- `components/FileUploader.tsx` - File upload, metadata extraction with `music-metadata-browser`
+- `components/GameScreen.tsx` - Core game loop, collision detection, enemy/projectile logic  
+- `components/FileUploader.tsx` - File upload, metadata extraction with jsmediatags
 - `services/lrcParser.ts` - Parses `.lrc` timing format (mm:ss.ms)
 - `types.ts` - TypeScript interfaces for game objects and state
 - `components/icons.tsx` - SVG React components for game sprites
@@ -65,11 +74,29 @@ This is a **Lyric Shooter Game** - a React/TypeScript browser-based bullet hell 
 **Difficulty Scaling**: Enemy shooter chance increases with song progress
 **Item System**: Seven different power-ups with stacking/non-stacking rules
 **Special Weapons**: BOMB (screen clear) and LASER_BEAM (sustained beam) with limited uses
+**Enemy Rate Tracking**: Real-time calculation of enemies spawned per second (E.RATE)
+**Automatic Enemy Clearing**: All enemies destroyed when player is hit (easier recovery)
 
-## Technical Notes
+## Development Notes
 
+### Performance Considerations
+- Game state stored in `gameStateRef.current` to avoid React re-render cycles
+- `React.memo` used for all game object components
+- Hardware-accelerated positioning with `transform: translate3d()`
 - Game runs at fixed 800x600 canvas size
-- Uses `transform: translate3d()` for hardware-accelerated positioning
-- Collision boxes slightly smaller than visual sprites for better gameplay feel
-- Audio synchronization tolerance built into lyric timing system
-- No networking or multiplayer components - purely single-player browser game
+
+### Audio Architecture  
+- HTML5 `<audio>` for music playback synchronized with lyrics
+- Web Audio API for dynamic effects (ducking, pitch shifting)
+- 4-second fade out with pitch reduction on game over
+- Sound effect generation using oscillators
+
+### Metadata Handling
+- Dynamic CDN loading of `jsmediatags` to avoid Vite module resolution issues
+- Extracts song title and album artwork from m4a file tags
+- Fallback to filename when metadata extraction fails
+
+### Testing Approach
+- Sample files in `public/` directory (`test.m4a`, `test.lrc`)
+- No formal testing framework - manual testing with game scenarios
+- Console logging for metadata extraction debugging

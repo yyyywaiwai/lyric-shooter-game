@@ -61,6 +61,31 @@ const InfoPanel = () => (
     </div>
 );
 
+const ControlsPanel = () => (
+    <div className="mt-6 max-w-2xl mx-auto p-4 bg-slate-800 bg-opacity-70 rounded-lg text-left">
+        <h3 className="text-2xl font-orbitron text-cyan-400 mb-4 text-center">CONTROLS</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-white">
+            <div>
+                <h4 className="font-bold text-lg mb-2 text-sky-300">MOVEMENT</h4>
+                <ul className="space-y-1">
+                    <li>↑/W - Move Up</li>
+                    <li>↓/S - Move Down</li>
+                    <li>←/A - Move Left</li>
+                    <li>→/D - Move Right</li>
+                </ul>
+            </div>
+            <div>
+                <h4 className="font-bold text-lg mb-2 text-sky-300">ACTIONS</h4>
+                <ul className="space-y-1">
+                    <li>SPACE - Fire Main Weapon</li>
+                    <li>SHIFT/TAB - Activate Special Item</li>
+                    <li>BACKSPACE (1.5s) - Return to READY Screen</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+);
+
 const getItemIcon = (itemType: ItemType, props?: React.SVGProps<SVGSVGElement>) => {
     const iconProps = { className: "w-6 h-6 mr-3 flex-shrink-0", ...props };
     switch (itemType) {
@@ -265,6 +290,7 @@ export default function App(): React.ReactNode {
             >
               Upload Different Files
             </button>
+            <ControlsPanel />
             <InfoPanel />
           </div>
         );

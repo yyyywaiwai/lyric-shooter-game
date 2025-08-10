@@ -391,6 +391,9 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       gameOverDelayEndTime: 0,
       shouldHidePlayer: false, // プレイヤーを非表示にするフラグ
       showGameOverText: false, // ゲームオーバーテキスト表示フラグ
+      // Backspace key long press for restart
+      backspacePressStart: 0,
+      backspacePressProgress: 0,
   });
 
   const [, forceUpdate] = useState(0);
@@ -657,6 +660,27 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
     } else if (spacebarPressStart.current === 0 && state.spacePressProgress > 0) {
         state.spacePressProgress = 0;
+    }
+
+    // --- Backspace Restart Logic ---
+    if (state.backspacePressStart > 0) {
+        const pressDuration = Date.now() - state.backspacePressStart;
+        state.backspacePressProgress = Math.min(100, (pressDuration / 1500) * 100);
+        if (pressDuration > 1500) {
+            // 1.5秒経過した場合、ゲームを終了してREADY画面に戻る
+            // App.tsxの状態を変更してREADY画面に戻るために、特別なステータスでendGameを呼び出す
+            if (audioRef.current) audioRef.current.pause();
+            onEndGameRef.current({ 
+                score: 0, 
+                enemiesDefeated: 0, 
+                totalEnemies: 0, 
+                itemsCollected: {}, 
+                songProgressPercentage: 0 
+            }, 'gameOver');
+            return;
+        }
+    } else if (state.backspacePressStart === 0 && state.backspacePressProgress > 0) {
+        state.backspacePressProgress = 0;
     }
 
     // --- Update Enemy Spawn Rate (every 1 second) ---
@@ -1527,6 +1551,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             e.preventDefault();
             activateSpecialItem();
         }
+        // Backspace key long press for restart
+        if (e.key === 'Backspace' && gameStateRef.current.backspacePressStart === 0) {
+            gameStateRef.current.backspacePressStart = Date.now();
+        }
         if (audioContextRef.current?.state === 'suspended') {
             audioContextRef.current.resume();
         }
@@ -1540,6 +1568,11 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             if(gameStateRef.current.spacePressProgress < 100) {
                 handleSkip();
             }
+        }
+        // Reset backspace press on key up
+        if (e.key === 'Backspace') {
+            gameStateRef.current.backspacePressStart = 0;
+            gameStateRef.current.backspacePressProgress = 0;
         }
     };
 
@@ -1691,6 +1724,21 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             </div>
         </div>
       </div>
+
+      {/* Backspace Long Press Progress Bar */}
+      {gameStateRef.current.backspacePressProgress > 0 && (
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 w-1/2">
+          <div className="text-center text-white text-sm mb-1 font-bold">
+            [BACKSPACE] TO RESTART: {Math.floor(gameStateRef.current.backspacePressProgress)}%
+          </div>
+          <div className="relative w-full bg-slate-700 rounded-full h-3 border-2 border-slate-500 overflow-hidden">
+            <div 
+              className="bg-red-500 h-full rounded-full transition-all duration-100" 
+              style={{ width: `${gameStateRef.current.backspacePressProgress}%` }}
+            ></div>
+          </div>
+        </div>
+      )}
 
       
       {gameStateRef.current.showSkip && (

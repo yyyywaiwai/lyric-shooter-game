@@ -1106,7 +1106,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
               hp: isElite ? 3 : 1,
               isFlashing: false,
               // Super Hard Mode Props
-              isBig: superHardMode && state.isMidGameBuffActive && !isElite,
+              isBig: superHardMode && state.isMidGameBuffActive && !isElite && isShooter,
             };
 
             if(enemy.isBig) enemy.hp = 3;

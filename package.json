@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "homepage": "https://yyyywaiwai.github.io/lyric-shooter-game",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -15,8 +16,8 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "@types/node": "^22.14.0"
   }
 }

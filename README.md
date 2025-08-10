@@ -1,5 +1,7 @@
 # 🎵 Lyric Shooter Game
 
+[![Play on GitHub Pages](https://img.shields.io/badge/Play%20Now-GitHub%20Pages-brightgreen)](https://yyyywaiwai.github.io/lyric-shooter-game)
+
 A React/TypeScript bullet hell game where enemies spawn based on song lyrics and are synchronized with audio playback. Control a spaceship to shoot down character-based enemies falling from the top of the screen.
 
 ![Game Screenshot](https://img.shields.io/badge/React-19.1.1-blue) ![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-blue) ![Vite](https://img.shields.io/badge/Vite-6.2.0-purple)

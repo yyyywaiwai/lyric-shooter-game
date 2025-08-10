@@ -1199,14 +1199,26 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
     const handleItemCollection = (item: Item) => {
         state.itemsCollected[item.type] = (state.itemsCollected[item.type] || 0) + 1;
+        // 効果音を再生
+        playCancelSound();
+        
         switch (item.type) {
             case 'BOMB':
+                if (state.stockedItem) { // If holding an item, convert new one to score
+                    state.score += 500;
+                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
+                } else {
+                    state.stockedItem = item.type;
+                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'BOMB!', createdAt: Date.now() });
+                }
+                break;
             case 'LASER_BEAM':
                 if (state.stockedItem) { // If holding an item, convert new one to score
                     state.score += 500;
                     state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
                 } else {
                     state.stockedItem = item.type;
+                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'LASER!', createdAt: Date.now() });
                 }
                 break;
             case 'SPEED_UP':
@@ -1219,6 +1231,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 if (!state.hasDiagonalShot) {
                     state.hasDiagonalShot = true;
                     state.baseShooterChance += 0.05;
+                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'DIAGONAL!', createdAt: Date.now() });
                 } else {
                     state.score += 1000;
                     state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
@@ -1227,6 +1240,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             case 'SIDE_SHOT':
                 if (!state.hasSideShot) {
                     state.hasSideShot = true;
+                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SIDE!', createdAt: Date.now() });
                 } else {
                     state.score += 1000;
                     state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
@@ -1235,6 +1249,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             case 'CANCELLER_SHOT':
                 if (!state.hasCancellerShot) {
                     state.hasCancellerShot = true;
+                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'CANCELLER!', createdAt: Date.now() });
                 } else {
                     state.score += 1000;
                     state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
@@ -1242,6 +1257,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 break;
             case 'ONE_UP':
                 state.lives++;
+                state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: '1UP!', createdAt: Date.now() });
                 break;
         }
     };
@@ -1609,23 +1625,44 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   else if (songProgressPercentage > 50) progressColorClass = 'bg-orange-500';
   else if (songProgressPercentage > 25) progressColorClass = 'bg-yellow-400';
 
-  const collectedItemIcons = useMemo(() => {
+  const allPassiveItemIcons = useMemo(() => {
     const state = gameStateRef.current;
-    const icons = [];
-    if (state.hasDiagonalShot) icons.push(<DiagonalShotIcon key="diag" className="w-5 h-5 text-green-400"/>);
-    if (state.hasSideShot) icons.push(<SideShotIcon key="side" className="w-5 h-5 text-cyan-400"/>);
-    if (state.hasCancellerShot) icons.push(<CancellerShotIcon key="cancel" className="w-5 h-5 text-purple-400"/>);
     
-    if (state.speedUpCount > 0) {
-        icons.push(
-            <div key="speed" className="flex items-center space-x-0.5 text-blue-400">
-                <SpeedUpIcon className="w-5 h-5"/>
-                <span className="text-xs font-bold">x{state.speedUpCount}</span>
-            </div>
-        );
-    }
+    // Diagonal Shot
+    const diagonalShotIcon = state.hasDiagonalShot ? (
+      <DiagonalShotIcon key="diag" className="w-5 h-5 fill-green-400"/>
+    ) : (
+      <DiagonalShotIcon key="diag" className="w-5 h-5 fill-gray-500 opacity-50"/>
+    );
+    
+    // Side Shot
+    const sideShotIcon = state.hasSideShot ? (
+      <SideShotIcon key="side" className="w-5 h-5 fill-cyan-400"/>
+    ) : (
+      <SideShotIcon key="side" className="w-5 h-5 fill-gray-500 opacity-50"/>
+    );
+    
+    // Canceller Shot
+    const cancellerShotIcon = state.hasCancellerShot ? (
+      <CancellerShotIcon key="cancel" className="w-5 h-5 fill-purple-400"/>
+    ) : (
+      <CancellerShotIcon key="cancel" className="w-5 h-5 fill-gray-500 opacity-50"/>
+    );
+    
+    // Speed Up
+    const speedUpIcon = state.speedUpCount > 0 ? (
+      <div key="speed" className="flex items-center space-x-0.5">
+        <SpeedUpIcon className="w-5 h-5 fill-blue-400"/>
+        <span className="text-xs font-bold text-blue-400">x{state.speedUpCount}</span>
+      </div>
+    ) : (
+      <div key="speed" className="flex items-center space-x-0.5">
+        <SpeedUpIcon className="w-5 h-5 fill-gray-500 opacity-50"/>
+        <span className="text-xs font-bold text-gray-500 opacity-50">x0</span>
+      </div>
+    );
 
-    return icons;
+    return [diagonalShotIcon, sideShotIcon, cancellerShotIcon, speedUpIcon];
   }, [
       gameStateRef.current.hasDiagonalShot, 
       gameStateRef.current.hasSideShot,
@@ -1687,11 +1724,17 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       {/* UI Overlay */}
       <div className="absolute top-0 left-0 right-0 p-3 text-white font-orbitron text-shadow-md flex justify-between items-start">
         <div className="text-left">
-            <div className="flex items-center">
-                {[...Array(Math.max(0, lives - 1))].map((_, i) => <PlayerShipIcon key={i} className={`w-6 h-6 mr-1 ${isLastStand ? 'text-red-500' : 'text-cyan-400'}`} />)}
+            {/* LIVES Display with Border */}
+            <div className="p-2 bg-transparent border-2 border-slate-600 rounded-lg">
+                <div className="flex items-center">
+                    {[...Array(Math.max(0, lives - 1))].map((_, i) => <PlayerShipIcon key={i} className={`w-6 h-6 mr-1 ${isLastStand ? 'text-red-500' : 'text-cyan-400'}`} />)}
+                </div>
             </div>
-            <div className="flex items-center mt-2 space-x-1 h-6">
-                {collectedItemIcons}
+            {/* Passive Items Display with Border */}
+            <div className="mt-2 p-2 bg-transparent border-2 border-slate-600 rounded-lg">
+                <div className="flex items-center space-x-1 h-6">
+                    {allPassiveItemIcons}
+                </div>
             </div>
             {/* Special Item Slot with Progress Bar */}
             <div className="mt-3 flex items-center space-x-2">

@@ -320,6 +320,12 @@ const FloatingTextComponent = React.memo(({ text, x, y, createdAt }: FloatingTex
 
 // --- Main Game Screen Component ---
 export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode = false, initialItem }: GameScreenProps): React.ReactNode {
+  // Unique ID generator for projectiles
+  const nextId = useRef(1);
+  const generateId = useCallback(() => {
+    return nextId.current++;
+  }, []);
+
   // Object pools for performance
   const projectilePool = useRef(new ObjectPool<Projectile>(
     () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0 }),
@@ -601,7 +607,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
           const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
           onScreenEnemies.forEach(e => {
             const explosion = explosionPool.current.get();
-            explosion.id = Date.now() + e.id;
+            explosion.id = generateId();
             explosion.x = e.x + e.width / 2;
             explosion.y = e.y + e.height / 2;
             explosion.size = 'small';
@@ -693,7 +699,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
         // Create new projectile object for proper React re-rendering
         state.projectiles.push({ 
-            id: Date.now(), 
+            id: generateId(), 
             x: pX, 
             y: pY, 
             width: PROJECTILE_WIDTH, 
@@ -704,7 +710,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         const diagonalInterval = isLastStand ? 2 : 3;
         if(state.hasDiagonalShot && state.mainShotCounter % diagonalInterval === 0) {
             state.projectiles.push({ 
-                id: Date.now() + 1, 
+                id: generateId(), 
                 x: pX, 
                 y: pY, 
                 width: PROJECTILE_WIDTH, 
@@ -713,7 +719,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 speedX: currentProjectileSpeed * 0.4 
             });
             state.projectiles.push({ 
-                id: Date.now() - 1, 
+                id: generateId(), 
                 x: pX, 
                 y: pY, 
                 width: PROJECTILE_WIDTH, 
@@ -728,7 +734,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             const sideProjectileY = state.playerY + PLAYER_HEIGHT / 2 - PROJECTILE_WIDTH / 2;
             
             state.projectiles.push({ 
-                id: Date.now() + 2, 
+                id: generateId(), 
                 x: state.playerX + PLAYER_WIDTH/2, 
                 y: sideProjectileY, 
                 width: PROJECTILE_HEIGHT, 
@@ -737,7 +743,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 speedX: -currentProjectileSpeed 
             });
             state.projectiles.push({ 
-                id: Date.now() - 2, 
+                id: generateId(), 
                 x: state.playerX + PLAYER_WIDTH/2, 
                 y: sideProjectileY, 
                 width: PROJECTILE_HEIGHT, 
@@ -869,7 +875,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                         break;
                     case 'LANDMINE':
                         enemy.lastShotTime = currentTime;
-                        state.mines.push({ id: currentTime + enemy.id, x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: MINE_WIDTH, height: MINE_HEIGHT, createdAt: currentTime });
+                        state.mines.push({ id: generateId(), x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: MINE_WIDTH, height: MINE_HEIGHT, createdAt: currentTime });
                         break;
                     case 'MAGIC': {
                         enemy.lastShotTime = currentTime;
@@ -892,7 +898,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                             case 'HOMING': {
                                 const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
                                 state.enemyProjectiles.push({
-                                    id: projectileBase.id,
+                                    id: generateId(),
                                     x: projectileBase.x,
                                     y: projectileBase.y,
                                     width: projectileBase.width,
@@ -905,7 +911,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                             }
                             case 'STRAIGHT_DOWN': {
                                 state.enemyProjectiles.push({
-                                    id: projectileBase.id,
+                                    id: generateId(),
                                     x: projectileBase.x,
                                     y: projectileBase.y,
                                     width: projectileBase.width,
@@ -918,7 +924,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                             }
                             case 'DELAYED_HOMING': {
                                 const proj = enemyProjectilePool.current.get();
-                                proj.id = projectileBase.id;
+                                proj.id = generateId();
                                 proj.x = projectileBase.x;
                                 proj.y = projectileBase.y;
                                 proj.width = projectileBase.width;
@@ -936,7 +942,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                                 for (let i = 0; i < 4; i++) {
                                     const angle = enemy.spiralAngle + (i * Math.PI / 2);
                                     const proj = enemyProjectilePool.current.get();
-                                    proj.id = projectileBase.id + i;
+                                    proj.id = generateId();
                                     proj.x = projectileBase.x;
                                     proj.y = projectileBase.y;
                                     proj.width = projectileBase.width;
@@ -960,7 +966,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     case 'HOMING': {
                         const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
                         const proj = enemyProjectilePool.current.get();
-                        proj.id = projectileBase.id;
+                        proj.id = generateId();
                         proj.x = projectileBase.x;
                         proj.y = projectileBase.y;
                         proj.width = projectileBase.width;
@@ -973,7 +979,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     }
                     case 'STRAIGHT_DOWN': {
                         const proj = enemyProjectilePool.current.get();
-                        proj.id = projectileBase.id;
+                        proj.id = generateId();
                         proj.x = projectileBase.x;
                         proj.y = projectileBase.y;
                         proj.width = projectileBase.width;
@@ -986,7 +992,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     }
                     case 'DELAYED_HOMING': {
                         const proj = enemyProjectilePool.current.get();
-                        proj.id = projectileBase.id;
+                        proj.id = generateId();
                         proj.x = projectileBase.x;
                         proj.y = projectileBase.y;
                         proj.width = projectileBase.width;
@@ -1002,7 +1008,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     case 'SPIRAL': {
                         const randomAngle = Math.random() * Math.PI * 2;
                         const proj = enemyProjectilePool.current.get();
-                        proj.id = projectileBase.id;
+                        proj.id = generateId();
                         proj.x = projectileBase.x;
                         proj.y = projectileBase.y;
                         proj.width = projectileBase.width;
@@ -1023,7 +1029,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             enemy.gatlingLastBurstTime = currentTime;
             
             const proj = enemyProjectilePool.current.get();
-            proj.id = currentTime + enemy.id;
+            proj.id = generateId();
             proj.x = enemy.x + enemy.width / 2;
             proj.y = enemy.y + enemy.height;
             proj.width = 8;
@@ -1084,7 +1090,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             }
 
             const enemy: Enemy = {
-              id: Date.now() + charIndex,
+              id: generateId(),
               char,
               x: Math.random() * (GAME_WIDTH - ENEMY_WIDTH),
               y: -ENEMY_HEIGHT,
@@ -1174,13 +1180,13 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             case 'LASER_BEAM':
                 if (state.stockedItem) { // If holding an item, convert new one to score
                     state.score += 500;
-                    state.floatingTexts.push({ id: Date.now(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
+                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
                 } else {
                     state.stockedItem = item.type;
                 }
                 break;
             case 'SPEED_UP':
-                state.floatingTexts.push({ id: Date.now(), x: state.playerX, y: state.playerY, text: 'SPEED UP!', createdAt: Date.now() });
+                state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SPEED UP!', createdAt: Date.now() });
                 state.playerSpeedMultiplier *= 1.15;
                 state.projectileSpeedMultiplier *= 1.15;
                 state.speedUpCount++;
@@ -1191,7 +1197,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     state.baseShooterChance += 0.05;
                 } else {
                     state.score += 1000;
-                    state.floatingTexts.push({ id: Date.now(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
+                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
                 }
                 break;
             case 'SIDE_SHOT':
@@ -1199,7 +1205,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     state.hasSideShot = true;
                 } else {
                     state.score += 1000;
-                    state.floatingTexts.push({ id: Date.now(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
+                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
                 }
                 break;
             case 'CANCELLER_SHOT':
@@ -1207,7 +1213,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     state.hasCancellerShot = true;
                 } else {
                     state.score += 1000;
-                    state.floatingTexts.push({ id: Date.now(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
+                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
                 }
                 break;
             case 'ONE_UP':
@@ -1237,7 +1243,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     state.enemiesDefeated++;
                     
                     const explosion = explosionPool.current.get();
-                    explosion.id = Date.now() + e.id;
+                    explosion.id = generateId();
                     explosion.x = e.x + e.width / 2;
                     explosion.y = e.y + e.height / 2;
                     explosion.size = (e.isElite || e.isBig) ? 'large' : 'small';
@@ -1263,7 +1269,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             const enemyRect = { x: e.x, y: e.y, width: e.width, height: e.height };
             if (lineIntersectsRect(laserLine, enemyRect)) {
                 state.score += 5;
-                state.explosions.push({ id: Date.now() + Math.random(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
+                state.explosions.push({ id: generateId(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
                 return false; // Enemy destroyed
             }
             return true;
@@ -1286,7 +1292,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         if (state.hasCancellerShot && Math.random() < cancellerChance) {
              cancellerNullified = true;
              playCancelSound();
-             state.floatingTexts.push({ id: Date.now(), x: state.playerX, y: state.playerY, text: 'GUARD!', createdAt: Date.now() });
+             state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'GUARD!', createdAt: Date.now() });
              
              // Add 0.5 second invincibility after canceller activation
              state.isInvincible = true;
@@ -1297,13 +1303,13 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
         state.lives--;
         playShipHitSound();
-        state.explosions.push({ id: Date.now() + 1, x: state.playerX + PLAYER_WIDTH/2, y: state.playerY + PLAYER_HEIGHT/2, size: 'large', createdAt: Date.now() });
+        state.explosions.push({ id: generateId(), x: state.playerX + PLAYER_WIDTH/2, y: state.playerY + PLAYER_HEIGHT/2, size: 'large', createdAt: Date.now() });
         
         // Activate bomb effect when player is destroyed (clear all on-screen enemies)
         playBombSound();
         const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
         onScreenEnemies.forEach(e => {
-            state.explosions.push({ id: Date.now() + e.id, x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
+            state.explosions.push({ id: generateId(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
             state.score += (e.isElite || e.isBig ? 75 : 10);
             state.enemiesDefeated++;
         });
@@ -1312,7 +1318,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         
         if (state.lives === 1 && !state.stockedItem) {
             state.stockedItem = Math.random() > 0.5 ? 'BOMB' : 'LASER_BEAM';
-            state.floatingTexts.push({ id: Date.now(), x: state.playerX, y: state.playerY, text: 'LAST STAND!', createdAt: Date.now() });
+            state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'LAST STAND!', createdAt: Date.now() });
         }
         
         if (state.lives <= 0) {
@@ -1402,7 +1408,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 for (let i = 0; i < 5; i++) {
                     const angle = (i * Math.PI * 2 / 5) - (Math.PI / 2);
                     const burstProj = enemyProjectilePool.current.get();
-                    burstProj.id = Date.now() + i;
+                    burstProj.id = generateId();
                     burstProj.x = m.x;
                     burstProj.y = m.y;
                     burstProj.width = 8;
@@ -1414,7 +1420,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 }
                 
                 const explosion = explosionPool.current.get();
-                explosion.id = Date.now() + m.id;
+                explosion.id = generateId();
                 explosion.x = m.x + m.width/2;
                 explosion.y = m.y + m.height/2;
                 explosion.size = 'small';
@@ -1465,7 +1471,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         if (availableItemTypes.length > 0) {
             const type = availableItemTypes[Math.floor(Math.random() * availableItemTypes.length)];
             state.items.push({
-                id: Date.now(),
+                id: generateId(),
                 type,
                 x: Math.random() * (GAME_WIDTH - ITEM_WIDTH),
                 y: -ITEM_HEIGHT,
@@ -1480,7 +1486,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     forceUpdate(c => c + 1);
     
     gameLoopId.current = requestAnimationFrame(gameLoop);
-  }, [lyrics, totalChars, totalLyricLines, endGame, superHardMode, handleSkip, playShipHitSound, playCancelSound, playBombSound, activateSpecialItem, fadeOutBgm]);
+  }, [lyrics, totalChars, totalLyricLines, endGame, superHardMode, handleSkip, playShipHitSound, playCancelSound, playBombSound, activateSpecialItem, fadeOutBgm, generateId]);
   
   // Cleanup pools on unmount
   useEffect(() => {

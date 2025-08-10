@@ -3,6 +3,93 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { LyricLine, Enemy, Projectile, Item, MovementPattern, ItemType, SpecialWeapon, EnemyProjectile, ShooterAttackPattern, Explosion, GameStats, EliteShooterType, Mine, FloatingText } from '../types';
 import { BombIcon, SpeedUpIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, PlayerShipIcon, SideShotIcon, CancellerShotIcon } from './icons';
 
+// Object pools for performance
+class ObjectPool<T> {
+  private pool: T[] = [];
+  private createFn: () => T;
+  private resetFn: (obj: T) => void;
+
+  constructor(createFn: () => T, resetFn: (obj: T) => void, initialSize = 50) {
+    this.createFn = createFn;
+    this.resetFn = resetFn;
+    // Pre-populate pool
+    for (let i = 0; i < initialSize; i++) {
+      this.pool.push(createFn());
+    }
+  }
+
+  get(): T {
+    if (this.pool.length > 0) {
+      return this.pool.pop()!;
+    }
+    return this.createFn();
+  }
+
+  release(obj: T): void {
+    this.resetFn(obj);
+    if (this.pool.length < 200) { // Prevent unlimited growth
+      this.pool.push(obj);
+    }
+  }
+
+  releaseAll(objects: T[]): void {
+    objects.forEach(obj => this.release(obj));
+  }
+}
+
+// Spatial grid for collision optimization
+class SpatialGrid {
+  private cellSize: number;
+  private cols: number;
+  private rows: number;
+  private grid: Set<any>[][];
+
+  constructor(width: number, height: number, cellSize = 64) {
+    this.cellSize = cellSize;
+    this.cols = Math.ceil(width / cellSize);
+    this.rows = Math.ceil(height / cellSize);
+    this.clear();
+  }
+
+  clear(): void {
+    this.grid = [];
+    for (let row = 0; row < this.rows; row++) {
+      this.grid[row] = [];
+      for (let col = 0; col < this.cols; col++) {
+        this.grid[row][col] = new Set();
+      }
+    }
+  }
+
+  insert(obj: any): void {
+    const minCol = Math.max(0, Math.floor(obj.x / this.cellSize));
+    const maxCol = Math.min(this.cols - 1, Math.floor((obj.x + obj.width) / this.cellSize));
+    const minRow = Math.max(0, Math.floor(obj.y / this.cellSize));
+    const maxRow = Math.min(this.rows - 1, Math.floor((obj.y + obj.height) / this.cellSize));
+
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        this.grid[row][col].add(obj);
+      }
+    }
+  }
+
+  queryNearby(obj: any): Set<any> {
+    const nearby = new Set<any>();
+    const minCol = Math.max(0, Math.floor((obj.x - this.cellSize) / this.cellSize));
+    const maxCol = Math.min(this.cols - 1, Math.floor((obj.x + obj.width + this.cellSize) / this.cellSize));
+    const minRow = Math.max(0, Math.floor((obj.y - this.cellSize) / this.cellSize));
+    const maxRow = Math.min(this.rows - 1, Math.floor((obj.y + obj.height + this.cellSize) / this.cellSize));
+
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        this.grid[row][col].forEach(item => nearby.add(item));
+      }
+    }
+    return nearby;
+  }
+}
+
 const GAME_WIDTH = 800;
 const GAME_HEIGHT = 600;
 const PLAYER_WIDTH = 36;
@@ -67,16 +154,21 @@ const lineIntersectsRect = (line: {p1: {x:number, y:number}, p2: {x:number, y:nu
 };
 
 
-// --- Helper Components ---
-const PlayerComponent = React.memo(({ x, y, isInvincible, isLastStand }: { x: number; y: number; isInvincible: boolean; isLastStand: boolean; }) => (
-    <div
-        style={{ transform: `translate3d(${x}px, ${y}px, 0)`, width: PLAYER_WIDTH, height: PLAYER_HEIGHT }}
-        className={`absolute text-cyan-400 ${isInvincible ? 'opacity-50 animate-pulse' : 'opacity-100'}`}
-    >
-        <PlayerShipIcon className={`w-full h-full ${isLastStand ? 'drop-shadow-[0_0_8px_#ef4444]' : 'drop-shadow-[0_0_5px_#0ea5e9]'}`} />
-    </div>
-));
+// Pre-rendered enemy color styles
+const ENEMY_COLORS = {
+  ELITE_MAGIC: '#f43f5e',
+  ELITE_GATLING: '#f59e0b',
+  ELITE_LANDMINE: '#84cc16',
+  ELITE_LASER: '#67e8f9',
+  ELITE_DEFAULT: '#a855f7',
+  SHOOTER_HOMING: '#e879f9',
+  SHOOTER_STRAIGHT_DOWN: '#facc15',
+  SHOOTER_DELAYED_HOMING: '#fb923c',
+  SHOOTER_SPIRAL: '#2dd4bf',
+  DEFAULT: '#f87171'
+};
 
+// Restore original DOM components with optimizations
 const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLastStand: boolean; }) => {
     let colorClass = 'text-red-400';
     if (enemy.isElite) {
@@ -120,7 +212,6 @@ const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLas
     );
 });
 
-
 const ProjectileComponent = React.memo(({ p }: { p: Projectile }) => (
     <div
         style={{ transform: `translate3d(${p.x}px, ${p.y}px, 0)`, width: p.width, height: p.height }}
@@ -154,6 +245,13 @@ const MineComponent = React.memo(({ mine }: { mine: Mine }) => (
     ></div>
 ));
 
+const LaserBeamComponent = React.memo(({ x, y }: { x: number, y:number }) => (
+    <div
+        style={{ transform: `translate3d(${x + PLAYER_WIDTH / 2 - 5}px, 0, 0)`, width: 10, height: y }}
+        className="absolute bg-gradient-to-t from-red-400 to-orange-300 rounded-t-full animate-pulse"
+    ></div>
+));
+
 const ItemComponent = React.memo(({ item }: { item: Item }) => {
     const getIcon = () => {
         const iconProps = { className: "w-8 h-8 drop-shadow-[0_0_8px_rgba(252,211,77,0.8)]" };
@@ -178,12 +276,16 @@ const ItemComponent = React.memo(({ item }: { item: Item }) => {
     );
 });
 
-const LaserBeamComponent = React.memo(({ x, y }: { x: number, y:number }) => (
+// Keep minimal DOM components for special effects only
+const PlayerComponent = React.memo(({ x, y, isInvincible, isLastStand }: { x: number; y: number; isInvincible: boolean; isLastStand: boolean; }) => (
     <div
-        style={{ transform: `translate3d(${x + PLAYER_WIDTH / 2 - 5}px, 0, 0)`, width: 10, height: y }}
-        className="absolute bg-gradient-to-t from-red-400 to-orange-300 rounded-t-full animate-pulse"
-    ></div>
+        style={{ transform: `translate3d(${x}px, ${y}px, 0)`, width: PLAYER_WIDTH, height: PLAYER_HEIGHT }}
+        className={`absolute text-cyan-400 ${isInvincible ? 'opacity-50 animate-pulse' : 'opacity-100'}`}
+    >
+        <PlayerShipIcon className={`w-full h-full ${isLastStand ? 'drop-shadow-[0_0_8px_#ef4444]' : 'drop-shadow-[0_0_5px_#0ea5e9]'}`} />
+    </div>
 ));
+
 
 const ExplosionComponent = React.memo(({ explosion }: { explosion: Explosion }) => {
     const sizeClass = explosion.size === 'large' ? 'w-32 h-32' : 'w-16 h-16';
@@ -218,6 +320,24 @@ const FloatingTextComponent = React.memo(({ text, x, y, createdAt }: FloatingTex
 
 // --- Main Game Screen Component ---
 export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode = false, initialItem }: GameScreenProps): React.ReactNode {
+  // Object pools for performance
+  const projectilePool = useRef(new ObjectPool<Projectile>(
+    () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0 }),
+    (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = PROJECTILE_WIDTH; obj.height = PROJECTILE_HEIGHT; obj.speedY = 0; obj.speedX = undefined; }
+  ));
+  
+  const enemyProjectilePool = useRef(new ObjectPool<EnemyProjectile>(
+    () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN' }),
+    (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = 8; obj.height = 8; obj.speedX = 0; obj.speedY = 0; obj.attackPattern = 'STRAIGHT_DOWN'; obj.isDelayed = false; obj.delayEndTime = undefined; }
+  ));
+  
+  const explosionPool = useRef(new ObjectPool<Explosion>(
+    () => ({ id: 0, x: 0, y: 0, size: 'small', createdAt: 0 }),
+    (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.size = 'small'; obj.createdAt = 0; }
+  ));
+  
+  const spatialGrid = useRef(new SpatialGrid(GAME_WIDTH, GAME_HEIGHT));
+  
   const gameStateRef = useRef({
       playerX: GAME_WIDTH / 2 - PLAYER_WIDTH / 2,
       playerY: GAME_HEIGHT - PLAYER_HEIGHT - 20,
@@ -446,6 +566,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
           }
           audio.currentTime = Math.max(0, lyrics[0].time - 3);
           gameStateRef.current.showSkip = false;
+          gameStateRef.current.spacePressProgress = 0;
+          spacebarPressStart.current = 0;
       }
   }, [lyrics]);
 
@@ -478,7 +600,13 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
           state.itemsCollected['BOMB'] = (state.itemsCollected['BOMB'] || 0) + 1;
           const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
           onScreenEnemies.forEach(e => {
-            state.explosions.push({ id: Date.now() + e.id, x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
+            const explosion = explosionPool.current.get();
+            explosion.id = Date.now() + e.id;
+            explosion.x = e.x + e.width / 2;
+            explosion.y = e.y + e.height / 2;
+            explosion.size = 'small';
+            explosion.createdAt = Date.now();
+            state.explosions.push(explosion);
             state.score += (e.isElite || e.isBig ? 75 : 10);
             state.enemiesDefeated++;
           });
@@ -563,19 +691,60 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             currentProjectileSpeed *= 1.3;
         }
 
-        state.projectiles.push({ id: Date.now(), x: pX, y: pY, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: currentProjectileSpeed });
+        // Create new projectile object for proper React re-rendering
+        state.projectiles.push({ 
+            id: Date.now(), 
+            x: pX, 
+            y: pY, 
+            width: PROJECTILE_WIDTH, 
+            height: PROJECTILE_HEIGHT, 
+            speedY: currentProjectileSpeed 
+        });
         
         const diagonalInterval = isLastStand ? 2 : 3;
         if(state.hasDiagonalShot && state.mainShotCounter % diagonalInterval === 0) {
-            state.projectiles.push({ id: Date.now() + 1, x: pX, y: pY, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: currentProjectileSpeed, speedX: currentProjectileSpeed * 0.4 });
-            state.projectiles.push({ id: Date.now() - 1, x: pX, y: pY, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: currentProjectileSpeed, speedX: -currentProjectileSpeed * 0.4 });
+            state.projectiles.push({ 
+                id: Date.now() + 1, 
+                x: pX, 
+                y: pY, 
+                width: PROJECTILE_WIDTH, 
+                height: PROJECTILE_HEIGHT, 
+                speedY: currentProjectileSpeed, 
+                speedX: currentProjectileSpeed * 0.4 
+            });
+            state.projectiles.push({ 
+                id: Date.now() - 1, 
+                x: pX, 
+                y: pY, 
+                width: PROJECTILE_WIDTH, 
+                height: PROJECTILE_HEIGHT, 
+                speedY: currentProjectileSpeed, 
+                speedX: -currentProjectileSpeed * 0.4 
+            });
         }
 
         const sideInterval = isLastStand ? 1 : 2;
         if(state.hasSideShot && state.mainShotCounter % sideInterval === 0) {
             const sideProjectileY = state.playerY + PLAYER_HEIGHT / 2 - PROJECTILE_WIDTH / 2;
-            state.projectiles.push({ id: Date.now() + 2, x: state.playerX + PLAYER_WIDTH/2, y: sideProjectileY, width: PROJECTILE_HEIGHT, height: PROJECTILE_WIDTH, speedY: 0, speedX: -currentProjectileSpeed });
-            state.projectiles.push({ id: Date.now() - 2, x: state.playerX + PLAYER_WIDTH/2, y: sideProjectileY, width: PROJECTILE_HEIGHT, height: PROJECTILE_WIDTH, speedY: 0, speedX: currentProjectileSpeed });
+            
+            state.projectiles.push({ 
+                id: Date.now() + 2, 
+                x: state.playerX + PLAYER_WIDTH/2, 
+                y: sideProjectileY, 
+                width: PROJECTILE_HEIGHT, 
+                height: PROJECTILE_WIDTH, 
+                speedY: 0, 
+                speedX: -currentProjectileSpeed 
+            });
+            state.projectiles.push({ 
+                id: Date.now() - 2, 
+                x: state.playerX + PLAYER_WIDTH/2, 
+                y: sideProjectileY, 
+                width: PROJECTILE_HEIGHT, 
+                height: PROJECTILE_WIDTH, 
+                speedY: 0, 
+                speedX: currentProjectileSpeed 
+            });
         }
     }
 
@@ -611,12 +780,19 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     state.enemies.forEach(e => { if (e.isFlashing && currentTime > e.flashEndTime!) e.isFlashing = false; });
     state.mines = state.mines.filter(m => currentTime - m.createdAt < MINE_LIFETIME);
     state.floatingTexts = state.floatingTexts.filter(ft => currentTime - ft.createdAt < FLOATING_TEXT_DURATION);
+    
+    // Clean up expired explosions and return to pool
+    const expiredExplosions = state.explosions.filter(ex => currentTime - ex.createdAt > EXPLOSION_DURATION);
+    explosionPool.current.releaseAll(expiredExplosions);
+    state.explosions = state.explosions.filter(ex => currentTime - ex.createdAt <= EXPLOSION_DURATION);
 
-    // --- Object Movement ---
+    // --- Object Movement (Optimized) ---
+    // Update projectiles in-place and filter out-of-bounds
     state.projectiles = state.projectiles.map(p => ({ ...p, y: p.y - p.speedY * dt, x: p.x + (p.speedX || 0) * dt })).filter(p => p.y > -p.height && p.y < GAME_HEIGHT && p.x > -p.width && p.x < GAME_WIDTH);
     
     const currentEnemyProjectileSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
 
+    // Update enemy projectiles
     state.enemyProjectiles = state.enemyProjectiles.map(p => {
         const updatedProjectile = { ...p };
 
@@ -635,7 +811,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         return updatedProjectile;
     }).filter(p => p.y < GAME_HEIGHT + 20 && p.y > -20 && p.x > -20 && p.x < GAME_WIDTH + 20);
 
-    state.items = state.items.map(i => ({ ...i, y: i.y + i.speedY * dt })).filter(i => i.y < GAME_HEIGHT);
+    // Update items with new objects for React re-rendering
+    state.items = state.items.map(item => ({ ...item, y: item.y + item.speedY * dt })).filter(item => item.y < GAME_HEIGHT);
     state.enemies = state.enemies.map(e => {
         let { x: newX, y: newY, speedX: newSpeedX, speedY: newSpeedY } = e;
         if(e.movementPattern === 'ACCELERATING' && e.accelerationY) newSpeedY += e.accelerationY * dt;
@@ -714,26 +891,60 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                         switch(patternToFire) {
                             case 'HOMING': {
                                 const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                                state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'HOMING', speedX: Math.cos(angle) * currentEnemyProjectileSpeed, speedY: Math.sin(angle) * currentEnemyProjectileSpeed });
+                                state.enemyProjectiles.push({
+                                    id: projectileBase.id,
+                                    x: projectileBase.x,
+                                    y: projectileBase.y,
+                                    width: projectileBase.width,
+                                    height: projectileBase.height,
+                                    attackPattern: 'HOMING',
+                                    speedX: Math.cos(angle) * currentEnemyProjectileSpeed,
+                                    speedY: Math.sin(angle) * currentEnemyProjectileSpeed
+                                });
                                 break;
                             }
-                            case 'STRAIGHT_DOWN':
-                                state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'STRAIGHT_DOWN', speedX: 0, speedY: currentEnemyProjectileSpeed });
+                            case 'STRAIGHT_DOWN': {
+                                state.enemyProjectiles.push({
+                                    id: projectileBase.id,
+                                    x: projectileBase.x,
+                                    y: projectileBase.y,
+                                    width: projectileBase.width,
+                                    height: projectileBase.height,
+                                    attackPattern: 'STRAIGHT_DOWN',
+                                    speedX: 0,
+                                    speedY: currentEnemyProjectileSpeed
+                                });
                                 break;
-                            case 'DELAYED_HOMING':
-                                state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'DELAYED_HOMING', speedX: 0, speedY: 0, isDelayed: true, delayEndTime: currentTime + 500 });
+                            }
+                            case 'DELAYED_HOMING': {
+                                const proj = enemyProjectilePool.current.get();
+                                proj.id = projectileBase.id;
+                                proj.x = projectileBase.x;
+                                proj.y = projectileBase.y;
+                                proj.width = projectileBase.width;
+                                proj.height = projectileBase.height;
+                                proj.attackPattern = 'DELAYED_HOMING';
+                                proj.speedX = 0;
+                                proj.speedY = 0;
+                                proj.isDelayed = true;
+                                proj.delayEndTime = currentTime + 500;
+                                state.enemyProjectiles.push(proj);
                                 break;
+                            }
                             case 'SPIRAL': {
                                 enemy.spiralAngle = (enemy.spiralAngle || 0) + 0.5;
                                 for (let i = 0; i < 4; i++) {
                                     const angle = enemy.spiralAngle + (i * Math.PI / 2);
-                                    state.enemyProjectiles.push({
-                                        ...projectileBase,
-                                        id: projectileBase.id + i,
-                                        attackPattern: 'SPIRAL',
-                                        speedX: Math.cos(angle) * currentEnemyProjectileSpeed * 0.7,
-                                        speedY: Math.sin(angle) * currentEnemyProjectileSpeed * 0.7
-                                    });
+                                    const proj = enemyProjectilePool.current.get();
+                                    proj.id = projectileBase.id + i;
+                                    proj.x = projectileBase.x;
+                                    proj.y = projectileBase.y;
+                                    proj.width = projectileBase.width;
+                                    proj.height = projectileBase.height;
+                                    proj.attackPattern = 'SPIRAL';
+                                    proj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 0.7;
+                                    proj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 0.7;
+                                    state.enemyProjectiles.push(proj);
                                 }
                                 break;
                             }
@@ -748,23 +959,58 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 switch(enemy.attackPattern) {
                     case 'HOMING': {
                         const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                        state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'HOMING', speedX: Math.cos(angle) * currentEnemyProjectileSpeed, speedY: Math.sin(angle) * currentEnemyProjectileSpeed });
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = projectileBase.id;
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'HOMING';
+                        proj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed;
+                        proj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed;
+                        state.enemyProjectiles.push(proj);
                         break;
                     }
-                    case 'STRAIGHT_DOWN':
-                        state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'STRAIGHT_DOWN', speedX: 0, speedY: currentEnemyProjectileSpeed });
+                    case 'STRAIGHT_DOWN': {
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = projectileBase.id;
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'STRAIGHT_DOWN';
+                        proj.speedX = 0;
+                        proj.speedY = currentEnemyProjectileSpeed;
+                        state.enemyProjectiles.push(proj);
                         break;
-                    case 'DELAYED_HOMING':
-                        state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'DELAYED_HOMING', speedX: 0, speedY: 0, isDelayed: true, delayEndTime: currentTime + 500 });
+                    }
+                    case 'DELAYED_HOMING': {
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = projectileBase.id;
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'DELAYED_HOMING';
+                        proj.speedX = 0;
+                        proj.speedY = 0;
+                        proj.isDelayed = true;
+                        proj.delayEndTime = currentTime + 500;
+                        state.enemyProjectiles.push(proj);
                         break;
+                    }
                     case 'SPIRAL': {
                         const randomAngle = Math.random() * Math.PI * 2;
-                        state.enemyProjectiles.push({
-                            ...projectileBase,
-                            attackPattern: 'SPIRAL',
-                            speedX: Math.cos(randomAngle) * currentEnemyProjectileSpeed * 0.7,
-                            speedY: Math.sin(randomAngle) * currentEnemyProjectileSpeed * 0.7,
-                        });
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = projectileBase.id;
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'SPIRAL';
+                        proj.speedX = Math.cos(randomAngle) * currentEnemyProjectileSpeed * 0.7;
+                        proj.speedY = Math.sin(randomAngle) * currentEnemyProjectileSpeed * 0.7;
+                        state.enemyProjectiles.push(proj);
                         break;
                     }
                 }
@@ -775,8 +1021,18 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         if (enemy.gatlingCooldown && enemy.gatlingBurstCount! > 0 && currentTime - enemy.gatlingLastBurstTime! > 100) {
             enemy.gatlingBurstCount!--;
             enemy.gatlingLastBurstTime = currentTime;
-            const projectileBase = { id: currentTime + enemy.id, x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: 8, height: 8 };
-            state.enemyProjectiles.push({ ...projectileBase, attackPattern: 'STRAIGHT_DOWN', speedX: 0, speedY: currentEnemyProjectileSpeed });
+            
+            const proj = enemyProjectilePool.current.get();
+            proj.id = currentTime + enemy.id;
+            proj.x = enemy.x + enemy.width / 2;
+            proj.y = enemy.y + enemy.height;
+            proj.width = 8;
+            proj.height = 8;
+            proj.attackPattern = 'STRAIGHT_DOWN';
+            proj.speedX = 0;
+            proj.speedY = currentEnemyProjectileSpeed;
+            state.enemyProjectiles.push(proj);
+            
             if(enemy.gatlingBurstCount === 0) {
                  setTimeout(() => { enemy.gatlingCooldown = false; }, ENEMY_FIRE_COOLDOWN);
             }
@@ -898,9 +1154,17 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       }
     }
     
-    // --- Collision Detection ---
-    const newProjectiles: Projectile[] = [];
-    const newEnemies: Enemy[] = [];
+    // --- Optimized Collision Detection with Spatial Grid ---
+    spatialGrid.current.clear();
+    
+    // Insert all objects into spatial grid
+    state.enemies.forEach(e => spatialGrid.current.insert(e));
+    state.projectiles.forEach(p => spatialGrid.current.insert(p));
+    state.enemyProjectiles.forEach(p => spatialGrid.current.insert(p));
+    state.items.forEach(i => spatialGrid.current.insert(i));
+    state.mines.forEach(m => spatialGrid.current.insert(m));
+    
+    const hitProjectiles = new Set<Projectile>();
     const enemiesHitThisFrame = new Set<number>();
 
     const handleItemCollection = (item: Item) => {
@@ -952,13 +1216,17 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
     };
 
-    // Projectiles vs Enemies
+    // Optimized Projectiles vs Enemies collision
     state.projectiles.forEach(p => {
-        let projectileHit = false;
-        state.enemies.forEach(e => {
-            if (projectileHit || enemiesHitThisFrame.has(e.id)) return;
+        if (hitProjectiles.has(p)) return;
+        
+        const nearbyEnemies = spatialGrid.current.queryNearby(p);
+        for (const e of nearbyEnemies) {
+            if (e.constructor.name !== 'Object' || !e.char || enemiesHitThisFrame.has(e.id)) continue;
+            
+            // AABB collision check
             if (p.x < e.x + e.width && p.x + p.width > e.x && p.y < e.y + e.height && p.y + p.height > e.y) {
-                projectileHit = true;
+                hitProjectiles.add(p);
                 e.hp!--;
                 e.isFlashing = true;
                 e.flashEndTime = Date.now() + 100;
@@ -967,15 +1235,25 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     enemiesHitThisFrame.add(e.id);
                     state.score += (e.isElite || e.isBig ? 75 : 10);
                     state.enemiesDefeated++;
-                    state.explosions.push({ id: Date.now() + e.id, x: e.x + e.width / 2, y: e.y + e.height / 2, size: (e.isElite || e.isBig) ? 'large' : 'small', createdAt: Date.now() });
+                    
+                    const explosion = explosionPool.current.get();
+                    explosion.id = Date.now() + e.id;
+                    explosion.x = e.x + e.width / 2;
+                    explosion.y = e.y + e.height / 2;
+                    explosion.size = (e.isElite || e.isBig) ? 'large' : 'small';
+                    explosion.createdAt = Date.now();
+                    state.explosions.push(explosion);
                 }
+                break;
             }
-        });
-        if (!projectileHit) newProjectiles.push(p);
+        }
     });
-    state.projectiles = newProjectiles;
-    state.enemies.forEach(e => { if (!enemiesHitThisFrame.has(e.id)) newEnemies.push(e); });
-    state.enemies = newEnemies;
+    
+    // Remove hit projectiles
+    state.projectiles = state.projectiles.filter(p => !hitProjectiles.has(p));
+    
+    // Remove destroyed enemies
+    state.enemies = state.enemies.filter(e => !enemiesHitThisFrame.has(e.id));
 
     // Laser vs Enemies
     if (state.isLaserActive) {
@@ -1078,47 +1356,78 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         return true;
     });
 
-    // Player Projectiles vs Enemy Projectiles (Canceller Shot)
+    // Player Projectiles vs Enemy Projectiles (Canceller Shot) - optimized
     if (state.hasCancellerShot) {
-        state.projectiles = state.projectiles.filter(playerP => {
-            let hitEnemyP = false;
-            state.enemyProjectiles = state.enemyProjectiles.filter(enemyP => {
-                 if (playerP.x < enemyP.x + enemyP.width && playerP.x + playerP.width > enemyP.x && playerP.y < enemyP.y + enemyP.height && playerP.y + playerP.height > enemyP.y) {
-                    hitEnemyP = true;
-                    return false;
-                 }
-                 return true;
-            });
-            return !hitEnemyP;
+        const playerProjsToRemove: Projectile[] = [];
+        const enemyProjsToRemove: EnemyProjectile[] = [];
+        
+        state.projectiles.forEach(playerP => {
+            if (playerProjsToRemove.includes(playerP)) return;
+            
+            const nearbyEnemyProj = spatialGrid.current.queryNearby(playerP);
+            for (const enemyP of nearbyEnemyProj) {
+                if (!enemyP.attackPattern || enemyProjsToRemove.includes(enemyP)) continue;
+                
+                if (playerP.x < enemyP.x + enemyP.width && playerP.x + playerP.width > enemyP.x && playerP.y < enemyP.y + enemyP.height && playerP.y + playerP.height > enemyP.y) {
+                    playerProjsToRemove.push(playerP);
+                    enemyProjsToRemove.push(enemyP);
+                    break;
+                }
+            }
         });
+        
+        // Remove collided projectiles
+        state.projectiles = state.projectiles.filter(p => !playerProjsToRemove.includes(p));
+        state.enemyProjectiles = state.enemyProjectiles.filter(p => !enemyProjsToRemove.includes(p));
+        
+        // Projectiles removed above
     }
 
-    // Player Projectiles vs Mines
-    state.projectiles = state.projectiles.filter(p => {
-        let hitMine = false;
-        state.mines = state.mines.filter(m => {
+    // Player Projectiles vs Mines (optimized)
+    const mineProjsToRemove: Projectile[] = [];
+    const minesToRemove: Mine[] = [];
+    
+    state.projectiles.forEach(p => {
+        if (mineProjsToRemove.includes(p)) return;
+        
+        const nearbyMines = spatialGrid.current.queryNearby(p);
+        for (const m of nearbyMines) {
+            if (!m.createdAt || minesToRemove.includes(m)) continue;
+            
             if (p.x < m.x + m.width && p.x + p.width > m.x && p.y < m.y + m.height && p.y + p.height > m.y) {
-                hitMine = true;
-                // Explode mine into burst
+                mineProjsToRemove.push(p);
+                minesToRemove.push(m);
+                
+                // Explode mine into burst using pool
                 for (let i = 0; i < 5; i++) {
-                    const angle = (i * Math.PI * 2 / 5) - (Math.PI / 2); // 5-way spread, starting downwards
-                    state.enemyProjectiles.push({
-                        id: Date.now() + i,
-                        x: m.x,
-                        y: m.y,
-                        width: 8, height: 8,
-                        attackPattern: 'STRAIGHT_DOWN', // Visually different maybe?
-                        speedX: Math.cos(angle) * currentEnemyProjectileSpeed * 0.8,
-                        speedY: Math.sin(angle) * currentEnemyProjectileSpeed * 0.8,
-                    });
+                    const angle = (i * Math.PI * 2 / 5) - (Math.PI / 2);
+                    const burstProj = enemyProjectilePool.current.get();
+                    burstProj.id = Date.now() + i;
+                    burstProj.x = m.x;
+                    burstProj.y = m.y;
+                    burstProj.width = 8;
+                    burstProj.height = 8;
+                    burstProj.attackPattern = 'STRAIGHT_DOWN';
+                    burstProj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 0.8;
+                    burstProj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 0.8;
+                    state.enemyProjectiles.push(burstProj);
                 }
-                state.explosions.push({ id: Date.now() + m.id, x: m.x + m.width/2, y: m.y + m.height/2, size: 'small', createdAt: Date.now() });
-                return false;
+                
+                const explosion = explosionPool.current.get();
+                explosion.id = Date.now() + m.id;
+                explosion.x = m.x + m.width/2;
+                explosion.y = m.y + m.height/2;
+                explosion.size = 'small';
+                explosion.createdAt = Date.now();
+                state.explosions.push(explosion);
+                break;
             }
-            return true;
-        });
-        return !hitMine;
+        }
     });
+    
+    state.projectiles = state.projectiles.filter(p => !mineProjsToRemove.includes(p));
+    state.mines = state.mines.filter(m => !minesToRemove.includes(m));
+    projectilePool.current.releaseAll(mineProjsToRemove);
     
     // Enemies vs Player
     state.enemies.forEach(e => {
@@ -1167,10 +1476,30 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
     }
 
-    // Force re-render
+    // Force re-render for smooth gameplay
     forceUpdate(c => c + 1);
+    
     gameLoopId.current = requestAnimationFrame(gameLoop);
   }, [lyrics, totalChars, totalLyricLines, endGame, superHardMode, handleSkip, playShipHitSound, playCancelSound, playBombSound, activateSpecialItem, fadeOutBgm]);
+  
+  // Cleanup pools on unmount
+  useEffect(() => {
+    return () => {
+      // Clear all pools to free memory
+      projectilePool.current = new ObjectPool<Projectile>(
+        () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0 }),
+        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = PROJECTILE_WIDTH; obj.height = PROJECTILE_HEIGHT; obj.speedY = 0; obj.speedX = undefined; }
+      );
+      enemyProjectilePool.current = new ObjectPool<EnemyProjectile>(
+        () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN' }),
+        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = 8; obj.height = 8; obj.speedX = 0; obj.speedY = 0; obj.attackPattern = 'STRAIGHT_DOWN'; obj.isDelayed = false; obj.delayEndTime = undefined; }
+      );
+      explosionPool.current = new ObjectPool<Explosion>(
+        () => ({ id: 0, x: 0, y: 0, size: 'small', createdAt: 0 }),
+        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.size = 'small'; obj.createdAt = 0; }
+      );
+    };
+  }, []);
 
   useEffect(() => {
     let hasSetupAudio = false;
@@ -1201,6 +1530,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         keysPressed.current[e.code] = false;
         if ((e.key === ' ' || e.code === 'Spacebar') && gameStateRef.current.showSkip) {
             spacebarPressStart.current = 0;
+            gameStateRef.current.spacePressProgress = 0;
             if(gameStateRef.current.spacePressProgress < 100) {
                 handleSkip();
             }
@@ -1358,13 +1688,13 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
       
       {gameStateRef.current.showSkip && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col items-center justify-center">
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col items-center justify-center z-40">
             <div className="text-center">
                 <p className="text-white text-3xl font-orbitron mb-4">SKIP INTRO</p>
                 <p className="text-sky-300 text-xl font-bold">[PRESS & HOLD SPACEBAR]</p>
             </div>
              <div className="absolute bottom-1/4 w-1/2 bg-gray-600 rounded-full h-2.5">
-                <div className="bg-sky-400 h-2.5 rounded-full" style={{width: `${gameStateRef.current.spacePressProgress}%`}}></div>
+                <div className="bg-sky-400 h-2.5 rounded-full transition-all duration-100" style={{width: `${gameStateRef.current.spacePressProgress}%`}}></div>
             </div>
         </div>
       )}

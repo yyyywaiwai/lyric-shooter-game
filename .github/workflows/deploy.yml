@@ -29,4 +29,5 @@ jobs:
       with:
         personal_token: ${{ secrets.DEPLOY_TOKEN }}
         publish_dir: ./dist
-        cname: ${{ secrets.CNAME }}
+        publish_branch: gh-pages
+        force_orphan: true

@@ -602,7 +602,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
   const activateSpecialItem = useCallback(() => {
       const state = gameStateRef.current;
-      if (!state.stockedItem) return;
+      if (!state.stockedItem || state.isGameOverDelayed) return;
 
       if (state.stockedItem === 'BOMB') {
           playBombSound();
@@ -709,7 +709,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     // --- Player Firing ---
     const currentFireCooldown = FIRE_COOLDOWN;
     
-    const canFire = !state.isRespawning && (keysPressed.current[' '] || keysPressed.current['Spacebar']) && !state.isLaserActive && !(state.showSkip && spacebarPressStart.current > 0);
+    const canFire = !state.isRespawning && !state.isGameOverDelayed && (keysPressed.current[' '] || keysPressed.current['Spacebar']) && !state.isLaserActive && !(state.showSkip && spacebarPressStart.current > 0);
     if (canFire && Date.now() - lastFireTime.current > currentFireCooldown) {
         lastFireTime.current = Date.now();
         state.mainShotCounter++;
@@ -1563,7 +1563,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         if ((e.key === ' ' || e.code === 'Spacebar') && gameStateRef.current.showSkip && spacebarPressStart.current === 0) {
             spacebarPressStart.current = Date.now();
         }
-        if (e.key === 'Shift' || e.code === 'Tab') {
+        if ((e.key === 'Shift' || e.code === 'Tab') && !gameStateRef.current.isGameOverDelayed) {
             e.preventDefault();
             activateSpecialItem();
         }

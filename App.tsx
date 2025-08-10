@@ -229,6 +229,17 @@ export default function App(): React.ReactNode {
     return () => window.removeEventListener('keydown', handler);
   }, [gameStatus, isSuperHardMode]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const handleGameStart = useCallback((item?: ItemType) => {
     if (audioUrl && lyrics) {
       setGameStats(null);

@@ -1,7 +1,8 @@
 // Minimal local API server for iTunes search + gamdl downloads
 // No external deps; uses Node 18+ built-ins
 // Endpoints:
-//  - GET  /api/search?term=...&country=US&limit=20
+//  - GET  /api/search?term=...&country=US&limit=20&downloadPreview=0|1
+//       (when downloadPreview=1, includes base64 preview audio)
 //  - POST /api/download { url, cookiesPath? }
 
 import { createServer } from 'http';
@@ -72,6 +73,8 @@ async function handleSearch(req, res, urlObj) {
   const term = urlObj.searchParams.get('term') || '';
   const country = urlObj.searchParams.get('country') || 'US';
   const limit = urlObj.searchParams.get('limit') || '20';
+  const downloadPreview = urlObj.searchParams.get('downloadPreview');
+  const includePreview = downloadPreview === '1' || downloadPreview === 'true';
 
   if (!term.trim()) {
     return sendJSON(res, 400, { error: 'Missing term' });
@@ -112,6 +115,24 @@ async function handleSearch(req, res, urlObj) {
       trackViewUrl: x.trackViewUrl,
       collectionViewUrl: x.collectionViewUrl,
     }));
+
+    if (includePreview) {
+      await Promise.all(
+        results.map(async (r) => {
+          if (!r.previewUrl) return;
+          try {
+            const pr = await fetch(r.previewUrl);
+            if (!pr.ok) return;
+            const buf = Buffer.from(await pr.arrayBuffer());
+            const mime = pr.headers.get('content-type') || detectMimeFromExt(r.previewUrl);
+            r.previewDataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+          } catch {
+            // ignore preview fetch errors
+          }
+        })
+      );
+    }
+
     return sendJSON(res, 200, { resultCount: results.length, results });
   } catch (e) {
     return sendJSON(res, 500, { error: 'Failed to fetch iTunes API', message: String(e) });

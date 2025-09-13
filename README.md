@@ -55,6 +55,40 @@ npm run dev
 
 4. Open http://localhost:5173 in your browser
 
+### Apple Music Search + Auto Download (gamdl)
+
+This repo includes a lightweight local API that lets you search Apple Music via the iTunes Search API and auto‑download the selected track’s `.m4a` and synced `.lrc` lyrics using your local `gamdl` installation. Then you can play the game immediately without manual file upload.
+
+Prerequisites:
+- Python 3.10+ and `gamdl` installed locally (`pip install gamdl`)
+- An active Apple Music subscription and a `cookies.txt` exported for Apple Music (see `gamdl-README.md`). Place `cookies.txt` in the project root (or set `GAMDL_COOKIES=/path/to/cookies.txt`).
+- FFmpeg available on your PATH (per `gamdl-README.md`).
+
+Run locally (two terminals) or host the server elsewhere:
+```bash
+# Terminal A – start the API server (http://localhost:3001)
+npm run server
+
+# Terminal B – start Vite dev server (http://localhost:5173)
+npm run dev
+```
+
+Usage:
+- On the home screen, set your API Server Address (stored in a cookie). If you host the server on another machine, enter its origin, e.g. `https://your-host.example.com:3001`. The app assumes the API lives under `/api`.
+- Choose “Search Apple Music”, enter a query, then click “Play” on a result.
+- The app calls the remote server’s `/api/download` which runs `gamdl` under the hood, returns audio+lyrics, and jumps straight to the READY screen.
+
+Notes:
+- The API is separate from the GitHub Pages frontend; host it wherever you like.
+- The server sends audio as a data URL and LRC as text; nothing is persisted.
+- If `gamdl` fails (e.g., cookies missing/expired or region mismatch), you’ll see an error banner in the UI.
+- When opening the frontend over HTTPS (e.g., GitHub Pages), the API server must also be HTTPS to avoid mixed‑content blocking. Ensure CORS allows your site.
+
+#### Default server address via env
+- Build-time env var `LS_SERVER_URL_DEFAULT` can set a default server address used when the cookie is absent.
+- Example: `LS_SERVER_URL_DEFAULT=https://my-api.example.com:3001 npm run build`
+- The app normalizes by appending `/api` if not present.
+
 ### Building for Production
 
 ```bash

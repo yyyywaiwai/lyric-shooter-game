@@ -2,6 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { LyricLine, SongMetadata } from '../types';
 import { parseLRC } from '../services/lrcParser';
 import { UploadIcon } from './icons';
+import SearchPanel from './SearchPanel';
+import ServerConfig from './ServerConfig';
 
 // Load jsmediatags from CDN
 const loadJsMediaTags = () => {
@@ -27,6 +29,7 @@ export default function FileUploader({ onFilesLoaded }: FileUploaderProps): Reac
   const [lrcFile, setLrcFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [mode, setMode] = useState<'search' | 'upload'>(() => 'search');
 
   const handleM4aChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -135,38 +138,59 @@ export default function FileUploader({ onFilesLoaded }: FileUploaderProps): Reac
   }, [m4aFile, lrcFile, onFilesLoaded]);
 
   return (
-    <div className="w-full max-w-2xl p-8 space-y-8 bg-slate-800 rounded-2xl shadow-2xl">
+    <div className="w-full max-w-3xl p-8 space-y-6 bg-slate-800 rounded-2xl shadow-2xl">
       <div className="text-center">
         <h1 className="text-4xl font-bold text-white font-orbitron text-shadow-neon">LYRIC SHOOTER</h1>
-        <p className="mt-2 text-sky-300">Upload an M4A audio file and its corresponding LRC lyric file to begin.</p>
+        <p className="mt-2 text-sky-300">Search Apple Music or upload files.</p>
       </div>
 
-      {error && <div className="p-4 text-center text-red-300 bg-red-900 bg-opacity-50 rounded-lg">{error}</div>}
+      <ServerConfig />
 
-      <div className="space-y-6">
-        <FileDropZone
-          id="m4a-upload"
-          label="M4A Audio File"
-          file={m4aFile}
-          accept="audio/mp4,.m4a"
-          onChange={handleM4aChange}
-        />
-        <FileDropZone
-          id="lrc-upload"
-          label="LRC Lyric File"
-          file={lrcFile}
-          accept=".lrc"
-          onChange={handleLrcChange}
-        />
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          className={`px-4 py-2 rounded font-bold ${mode === 'search' ? 'bg-sky-600 text-white' : 'bg-slate-700 text-slate-200'}`}
+          onClick={() => setMode('search')}
+        >
+          Search Apple Music
+        </button>
+        <button
+          className={`px-4 py-2 rounded font-bold ${mode === 'upload' ? 'bg-sky-600 text-white' : 'bg-slate-700 text-slate-200'}`}
+          onClick={() => setMode('upload')}
+        >
+          Upload Files
+        </button>
       </div>
 
-      <button
-        onClick={handleSubmit}
-        disabled={!m4aFile || !lrcFile || isLoading}
-        className="w-full px-8 py-4 text-xl font-bold text-white transition-all duration-300 bg-sky-600 rounded-lg disabled:bg-slate-600 disabled:cursor-not-allowed hover:bg-sky-500 font-orbitron box-shadow-neon disabled:shadow-none"
-      >
-        {isLoading ? 'Loading...' : 'LOAD GAME'}
-      </button>
+      {mode === 'search' ? (
+        <SearchPanel onLoaded={onFilesLoaded} />
+      ) : (
+        <div className="space-y-6">
+          {error && <div className="p-4 text-center text-red-300 bg-red-900 bg-opacity-50 rounded-lg">{error}</div>}
+
+          <FileDropZone
+            id="m4a-upload"
+            label="M4A Audio File"
+            file={m4aFile}
+            accept="audio/mp4,.m4a"
+            onChange={handleM4aChange}
+          />
+          <FileDropZone
+            id="lrc-upload"
+            label="LRC Lyric File"
+            file={lrcFile}
+            accept=".lrc"
+            onChange={handleLrcChange}
+          />
+
+          <button
+            onClick={handleSubmit}
+            disabled={!m4aFile || !lrcFile || isLoading}
+            className="w-full px-8 py-4 text-xl font-bold text-white transition-all duration-300 bg-sky-600 rounded-lg disabled:bg-slate-600 disabled:cursor-not-allowed hover:bg-sky-500 font-orbitron box-shadow-neon disabled:shadow-none"
+          >
+            {isLoading ? 'Loading...' : 'LOAD GAME'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

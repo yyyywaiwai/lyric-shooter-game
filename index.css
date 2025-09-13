@@ -1,0 +1,5 @@
+/* Minimal placeholder to avoid 404 from index.html */
+/* Tailwind is loaded via CDN; this file can host overrides if needed. */
+html, body { height: 100%; }
+* { box-sizing: border-box; }
+

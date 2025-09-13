@@ -78,6 +78,11 @@ Usage:
 - Choose “Search Apple Music”, enter a query, then click “Play” on a result.
 - The app calls the remote server’s `/api/download` which runs `gamdl` under the hood, returns audio+lyrics, and jumps straight to the READY screen.
 
+For direct API use:
+
+- `GET /api/search?term=hello&downloadPreview=1` – search Apple Music. When `downloadPreview=1`, each result includes a `previewDataUrl` field with base64-encoded preview audio.
+- `POST /api/download` – JSON body `{ "url": "https://music.apple.com/..." }` returns full track audio and synced lyrics.
+
 Notes:
 - The API is separate from the GitHub Pages frontend; host it wherever you like.
 - The server sends audio as a data URL and LRC as text; nothing is persisted.

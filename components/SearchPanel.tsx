@@ -1,8 +1,9 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { parseLRC } from '@/services/lrcParser';
 import type { ITunesTrack } from '@/services/api';
 import { searchSongs, downloadByAppleMusicUrl } from '@/services/api';
 import type { LyricLine, SongMetadata } from '@/types';
+import { getCookie, setCookie } from '@/services/cookies';
 
 interface SearchPanelProps {
   onLoaded: (audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => void;
@@ -25,6 +26,17 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
   const canSearch = useMemo(() => q.trim().length > 0 && !loading, [q, loading]);
+
+  // Load saved region from cookie on first render
+  useEffect(() => {
+    const saved = getCookie('LS_COUNTRY');
+    if (saved) setCountry(saved);
+  }, []);
+
+  // Persist region selection to cookie
+  useEffect(() => {
+    setCookie('LS_COUNTRY', country, 365);
+  }, [country]);
 
   const doSearch = useCallback(async () => {
     if (!canSearch) return;
@@ -70,7 +82,7 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
         <p className="mt-1 text-sky-300">Search a song, then click Play to start.</p>
       </div>
 
-      <div className="flex gap-2">
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); doSearch(); }}>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -92,13 +104,13 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
           <option value="FR">FR</option>
         </select>
         <button
-          onClick={doSearch}
+          type="submit"
           disabled={!canSearch}
           className="px-4 py-2 font-bold rounded bg-sky-600 text-white disabled:bg-slate-600 hover:bg-sky-500"
         >
           {loading ? 'Searching...' : 'Search'}
         </button>
-      </div>
+      </form>
 
       {error && (
         <div className="p-3 text-red-300 bg-red-900/50 rounded">{error}</div>
@@ -134,4 +146,3 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
     </div>
   );
 }
-

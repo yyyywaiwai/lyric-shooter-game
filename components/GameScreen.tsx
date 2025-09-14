@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { LyricLine, Enemy, Projectile, Item, MovementPattern, ItemType, SpecialWeapon, EnemyProjectile, ShooterAttackPattern, Explosion, GameStats, EliteShooterType, Mine, FloatingText } from '../types';
-import { BombIcon, SpeedUpIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, PlayerShipIcon, SideShotIcon, CancellerShotIcon } from './icons';
+import { BombIcon, SpeedUpIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, PlayerShipIcon, SideShotIcon, CancellerShotIcon, RicochetShotIcon, PhaseShieldIcon } from './icons';
+import ProgressCircle from './ProgressCircle';
 
 // Object pools for performance
 class ObjectPool<T> {
@@ -123,6 +124,9 @@ const MINE_WIDTH = 22;
 const MINE_HEIGHT = 22;
 const MINE_LIFETIME = 9000; // 9 seconds
 const FLOATING_TEXT_DURATION = 1000;
+const RICOCHET_SPEED_FACTOR = 0.3; // 70% slower after each bounce (disabled during Last Stand)
+const RICOCHET_DIAMETER = 10; // visual/collision size for bounced bullets
+const PHASE_SHIELD_DURATION = 3000; // ms
 
 interface GameScreenProps {
   audioUrl: string;
@@ -212,12 +216,19 @@ const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLas
     );
 });
 
-const ProjectileComponent = React.memo(({ p }: { p: Projectile }) => (
-    <div
-        style={{ transform: `translate3d(${p.x}px, ${p.y}px, 0)`, width: p.width, height: p.height }}
-        className="absolute bg-yellow-300 rounded-lg box-shadow-neon"
-    ></div>
-));
+const ProjectileComponent = React.memo(({ p }: { p: Projectile }) => {
+    const isRico = p.isRicochetPrimary || p.hasBounced;
+    const color = isRico ? 'bg-rose-400' : 'bg-yellow-300';
+    const style: React.CSSProperties = {
+        transform: `translate3d(${p.x}px, ${p.y}px, 0)`,
+        width: p.width,
+        height: p.height,
+    };
+    const shapeClass = p.hasBounced ? 'rounded-full' : 'rounded-lg';
+    return (
+        <div style={style} className={`absolute ${color} ${shapeClass} box-shadow-neon`}></div>
+    );
+});
 
 const EnemyProjectileComponent = React.memo(({ p }: { p: EnemyProjectile }) => {
     const projectileColor = {
@@ -261,7 +272,9 @@ const ItemComponent = React.memo(({ item }: { item: Item }) => {
             case 'DIAGONAL_SHOT': return <DiagonalShotIcon {...iconProps} />;
             case 'SIDE_SHOT': return <SideShotIcon {...iconProps} />;
             case 'CANCELLER_SHOT': return <CancellerShotIcon {...iconProps} />;
+            case 'RICOCHET_SHOT': return <RicochetShotIcon {...iconProps} />;
             case 'LASER_BEAM': return <LaserIcon {...iconProps} />;
+            case 'PHASE_SHIELD': return <PhaseShieldIcon {...iconProps} />;
             case 'ONE_UP': return <OneUpIcon {...iconProps} />;
             default: return null;
         }
@@ -277,11 +290,26 @@ const ItemComponent = React.memo(({ item }: { item: Item }) => {
 });
 
 // Keep minimal DOM components for special effects only
-const PlayerComponent = React.memo(({ x, y, isInvincible, isLastStand }: { x: number; y: number; isInvincible: boolean; isLastStand: boolean; }) => (
+const PlayerComponent = React.memo(({ x, y, isInvincible, isLastStand, hasPhaseShield }: { x: number; y: number; isInvincible: boolean; isLastStand: boolean; hasPhaseShield: boolean; }) => (
     <div
-        style={{ transform: `translate3d(${x}px, ${y}px, 0)`, width: PLAYER_WIDTH, height: PLAYER_HEIGHT }}
-        className={`absolute text-cyan-400 ${isInvincible ? 'opacity-50 animate-pulse' : 'opacity-100'}`}
+        style={{ transform: `translate3d(${x}px, ${y}px, 0)`, width: PLAYER_WIDTH, height: PLAYER_HEIGHT, position: 'absolute' }}
+        className={`text-cyan-400 ${isInvincible ? 'opacity-50 animate-pulse' : 'opacity-100'}`}
     >
+        {hasPhaseShield && (
+            <div
+                style={{
+                    position: 'absolute',
+                    left: -6,
+                    top: -6,
+                    width: PLAYER_WIDTH + 12,
+                    height: PLAYER_HEIGHT + 12,
+                    borderRadius: '9999px',
+                    boxShadow: '0 0 12px rgba(250,204,21,0.95), 0 0 24px rgba(250,204,21,0.6)',
+                    pointerEvents: 'none',
+                }}
+                className="animate-pulse"
+            />
+        )}
         <PlayerShipIcon className={`w-full h-full ${isLastStand ? 'drop-shadow-[0_0_8px_#ef4444]' : 'drop-shadow-[0_0_5px_#0ea5e9]'}`} />
     </div>
 ));
@@ -360,10 +388,15 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       hasDiagonalShot: false,
       hasSideShot: false,
       hasCancellerShot: false,
+      hasRicochetShot: false,
+      ricochetStacks: 0,
       mainShotCounter: 0,
       stockedItem: null as SpecialWeapon | null,
+      stockedItemActiveUntil: 0,
       isLaserActive: false,
       laserEndTime: 0,
+      isPhaseShieldActive: false,
+      phaseShieldEndTime: 0,
       enemies: [] as Enemy[],
       items: [] as Item[],
       mines: [] as Mine[],
@@ -405,6 +438,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   const gameLoopId = useRef<number | null>(null);
   const itemSpawnMilestone = useRef(0);
   const spacebarPressStart = useRef(0);
+  const initialItemAppliedRef = useRef(false);
+  const loopStartedRef = useRef(false);
   
   const totalChars = useMemo(() => lyrics.reduce((acc, line) => acc + line.text.replace(/\s/g, '').length, 0), [lyrics]);
   const totalLyricLines = useMemo(() => lyrics.length, [lyrics]);
@@ -418,19 +453,26 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   
   useEffect(() => {
     if (initialItem) {
-        const state = gameStateRef.current;
-        state.itemsCollected[initialItem] = (state.itemsCollected[initialItem] || 0) + 1;
-        switch (initialItem) {
-            case 'ONE_UP': state.lives++; break;
-            case 'SPEED_UP':
-                state.playerSpeedMultiplier *= 1.15;
-                state.projectileSpeedMultiplier *= 1.15;
-                state.speedUpCount++;
-                break;
-            case 'DIAGONAL_SHOT': if (!state.hasDiagonalShot) { state.hasDiagonalShot = true; state.baseShooterChance += 0.05; } break;
-            case 'SIDE_SHOT': if (!state.hasSideShot) { state.hasSideShot = true; } break;
-            case 'CANCELLER_SHOT': if (!state.hasCancellerShot) { state.hasCancellerShot = true; } break;
-            case 'BOMB': case 'LASER_BEAM': state.stockedItem = initialItem; break;
+        if (!initialItemAppliedRef.current) {
+            initialItemAppliedRef.current = true;
+            const state = gameStateRef.current;
+            state.itemsCollected[initialItem] = (state.itemsCollected[initialItem] || 0) + 1;
+            switch (initialItem) {
+                case 'ONE_UP': state.lives++; break;
+                case 'SPEED_UP':
+                    state.playerSpeedMultiplier *= 1.15;
+                    state.projectileSpeedMultiplier *= 1.15;
+                    state.speedUpCount++;
+                    break;
+                case 'DIAGONAL_SHOT': if (!state.hasDiagonalShot) { state.hasDiagonalShot = true; state.baseShooterChance += 0.05; } break;
+                case 'SIDE_SHOT': if (!state.hasSideShot) { state.hasSideShot = true; } break;
+                case 'CANCELLER_SHOT': if (!state.hasCancellerShot) { state.hasCancellerShot = true; } break;
+                case 'RICOCHET_SHOT':
+                    state.hasRicochetShot = true;
+                    state.ricochetStacks = (state.ricochetStacks || 0) + 1;
+                    break;
+                case 'BOMB': case 'LASER_BEAM': case 'PHASE_SHIELD': state.stockedItem = initialItem; break;
+            }
         }
     }
   }, [initialItem]);
@@ -603,6 +645,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   const activateSpecialItem = useCallback(() => {
       const state = gameStateRef.current;
       if (!state.stockedItem || state.isGameOverDelayed) return;
+      // Prevent re-activation while a duration-based item is active and held in the slot
+      if (state.stockedItemActiveUntil && Date.now() < state.stockedItemActiveUntil) return;
 
       if (state.stockedItem === 'BOMB') {
           playBombSound();
@@ -624,7 +668,20 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       } else if (state.stockedItem === 'LASER_BEAM') {
           state.isLaserActive = true;
           state.laserEndTime = Date.now() + LASER_DURATION;
+          state.stockedItemActiveUntil = state.laserEndTime;
+          playCancelSound();
+          return; // keep icon in slot semi-transparent while active
+      } else if (state.stockedItem === 'PHASE_SHIELD') {
+          state.isPhaseShieldActive = true;
+          state.phaseShieldEndTime = Date.now() + PHASE_SHIELD_DURATION;
+          state.isInvincible = true;
+          state.invincibilityEndTime = state.phaseShieldEndTime;
+          state.stockedItemActiveUntil = state.phaseShieldEndTime;
+          state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'PHASE SHIELD!', createdAt: Date.now() });
+          playCancelSound();
+          return; // keep icon in slot semi-transparent while active
       }
+      // Non-duration items are consumed immediately
       state.stockedItem = null;
   }, [playBombSound]);
 
@@ -722,13 +779,16 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
 
         // Create new projectile object for proper React re-rendering
+        const isRicochetPrimary = state.hasRicochetShot; // now every main shot if owned
         state.projectiles.push({ 
             id: generateId(), 
             x: pX, 
             y: pY, 
             width: PROJECTILE_WIDTH, 
             height: PROJECTILE_HEIGHT, 
-            speedY: currentProjectileSpeed 
+            speedY: currentProjectileSpeed,
+            isRicochetPrimary,
+            remainingBounces: isRicochetPrimary ? state.ricochetStacks : 0,
         });
         
         const diagonalInterval = isLastStand ? 2 : 3;
@@ -806,7 +866,13 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         state.playerY = GAME_HEIGHT - PLAYER_HEIGHT - 20;
     }
     if (state.isInvincible && currentTime > state.invincibilityEndTime) state.isInvincible = false;
-    if (state.isLaserActive && currentTime > state.laserEndTime) state.isLaserActive = false;
+    if (state.isLaserActive && currentTime > state.laserEndTime) { state.isLaserActive = false; playCancelSound(); }
+    if (state.isPhaseShieldActive && currentTime > state.phaseShieldEndTime) { state.isPhaseShieldActive = false; playCancelSound(); state.isInvincible = true; state.invincibilityEndTime = currentTime + 500; }
+    // Clear duration-based item from slot when its effect ends
+    if (state.stockedItemActiveUntil && currentTime > state.stockedItemActiveUntil) {
+        state.stockedItemActiveUntil = 0;
+        state.stockedItem = null;
+    }
     state.enemies.forEach(e => { if (e.isFlashing && currentTime > e.flashEndTime!) e.isFlashing = false; });
     state.mines = state.mines.filter(m => currentTime - m.createdAt < MINE_LIFETIME);
     state.floatingTexts = state.floatingTexts.filter(ft => currentTime - ft.createdAt < FLOATING_TEXT_DURATION);
@@ -1221,6 +1287,15 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'LASER!', createdAt: Date.now() });
                 }
                 break;
+            case 'PHASE_SHIELD':
+                if (state.stockedItem) {
+                    state.score += 500;
+                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
+                } else {
+                    state.stockedItem = item.type;
+                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SHIELD!', createdAt: Date.now() });
+                }
+                break;
             case 'SPEED_UP':
                 state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SPEED UP!', createdAt: Date.now() });
                 state.playerSpeedMultiplier *= 1.15;
@@ -1255,11 +1330,35 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
                 }
                 break;
+            case 'RICOCHET_SHOT':
+                state.hasRicochetShot = true;
+                state.ricochetStacks = (state.ricochetStacks || 0) + 1;
+                state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: `RICOCHET x${state.ricochetStacks}` , createdAt: Date.now() });
+                break;
             case 'ONE_UP':
                 state.lives++;
                 state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: '1UP!', createdAt: Date.now() });
                 break;
         }
+    };
+
+    // Helper: find nearest enemy to a point, optionally excluding one id
+    const findNearestEnemy = (x: number, y: number, excludeId?: number) => {
+        let best: Enemy | null = null;
+        let bestDist = Infinity;
+        for (const e of state.enemies) {
+            if (excludeId && e.id === excludeId) continue;
+            const cx = e.x + e.width / 2;
+            const cy = e.y + e.height / 2;
+            const dx = cx - x;
+            const dy = cy - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < bestDist) {
+                bestDist = d2;
+                best = e;
+            }
+        }
+        return best;
     };
 
     // Optimized Projectiles vs Enemies collision
@@ -1277,6 +1376,38 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 e.isFlashing = true;
                 e.flashEndTime = Date.now() + 100;
                 
+                // Ricochet bounce trigger: when bullet has remaining bounces
+                if ((p.remainingBounces || 0) > 0) {
+                    const impactX = p.x + p.width / 2;
+                    const impactY = p.y + p.height / 2;
+                    const target = findNearestEnemy(impactX, impactY, e.id);
+                    if (target) {
+                        // calculate steering toward target
+                        const tx = target.x + target.width / 2;
+                        const ty = target.y + target.height / 2;
+                        const dx = tx - impactX;
+                        const dy = ty - impactY;
+                        const mag = Math.hypot(dx, dy) || 1;
+                        const baseSpeed = Math.hypot(p.speedX || 0, p.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
+                        const nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
+                        const vx = (dx / mag) * nextSpeed;
+                        const vy = (dy / mag) * nextSpeed; // positive is downward
+                        const rot = Math.atan2(vy, vx) * 180 / Math.PI;
+                        state.projectiles.push({
+                            id: generateId(),
+                            x: impactX - RICOCHET_DIAMETER / 2,
+                            y: impactY - RICOCHET_DIAMETER / 2,
+                            width: RICOCHET_DIAMETER,
+                            height: RICOCHET_DIAMETER,
+                            speedX: vx,
+                            // convert to internal sign convention (y -= speedY*dt)
+                            speedY: -vy,
+                            hasBounced: true,
+                            remainingBounces: (p.remainingBounces || 0) - 1,
+                        });
+                    }
+                }
+
                 if (e.hp! <= 0) {
                     enemiesHitThisFrame.add(e.id);
                     state.score += (e.isElite || e.isBig ? 75 : 10);
@@ -1377,8 +1508,27 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     // Enemy Projectiles vs Player
     state.enemyProjectiles = state.enemyProjectiles.filter(p => {
         if (p.x < playerHitbox.x + playerHitbox.width && p.x + p.width > playerHitbox.x && p.y < playerHitbox.y + playerHitbox.height && p.y + p.height > playerHitbox.y) {
-            takeHit();
-            return false;
+            if (state.isPhaseShieldActive) {
+                // With Canceller, reflect the projectile back
+                if (state.hasCancellerShot) {
+                    const proj = projectilePool.current.get();
+                    proj.id = generateId();
+                    proj.x = state.playerX + PLAYER_WIDTH / 2 - PROJECTILE_WIDTH / 2;
+                    proj.y = state.playerY;
+                    proj.width = PROJECTILE_WIDTH;
+                    proj.height = PROJECTILE_HEIGHT;
+                    proj.speedX = -(p.speedX);
+                    // Ensure upward travel; if incoming was upward, invert to downward then upward min speed
+                    const baseUp = Math.max(INITIAL_PROJECTILE_SPEED_PER_SECOND * 0.7, -p.speedY);
+                    proj.speedY = baseUp;
+                    state.projectiles.push(proj);
+                    playCancelSound();
+                }
+                return false; // absorbed by shield
+            } else {
+                takeHit();
+                return false;
+            }
         }
         return true;
     });
@@ -1415,6 +1565,35 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 if (!enemyP.attackPattern || enemyProjsToRemove.includes(enemyP)) continue;
                 
                 if (playerP.x < enemyP.x + enemyP.width && playerP.x + playerP.width > enemyP.x && playerP.y < enemyP.y + enemyP.height && playerP.y + playerP.height > enemyP.y) {
+                    // If this bullet still has ricochets remaining, trigger a bounce on cancel
+                    if ((playerP.remainingBounces || 0) > 0) {
+                        const impactX = playerP.x + playerP.width / 2;
+                        const impactY = playerP.y + playerP.height / 2;
+                        const target = findNearestEnemy(impactX, impactY);
+                        if (target) {
+                            const tx = target.x + target.width / 2;
+                            const ty = target.y + target.height / 2;
+                            const dx = tx - impactX;
+                            const dy = ty - impactY;
+                            const mag = Math.hypot(dx, dy) || 1;
+                            const baseSpeed = Math.hypot(playerP.speedX || 0, playerP.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
+                            const nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
+                            const vx = (dx / mag) * nextSpeed;
+                            const vy = (dy / mag) * nextSpeed;
+                            const rot = Math.atan2(vy, vx) * 180 / Math.PI;
+                            state.projectiles.push({
+                                id: generateId(),
+                                x: impactX - RICOCHET_DIAMETER / 2,
+                                y: impactY - RICOCHET_DIAMETER / 2,
+                                width: RICOCHET_DIAMETER,
+                                height: RICOCHET_DIAMETER,
+                                speedX: vx,
+                                speedY: -vy,
+                                hasBounced: true,
+                                remainingBounces: (playerP.remainingBounces || 0) - 1,
+                            });
+                        }
+                    }
                     playerProjsToRemove.push(playerP);
                     enemyProjsToRemove.push(enemyP);
                     break;
@@ -1478,9 +1657,21 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     // Enemies vs Player
     state.enemies.forEach(e => {
         if (e.x < playerHitbox.x + playerHitbox.width && e.x + e.width > playerHitbox.x && e.y < playerHitbox.y + playerHitbox.height && e.y + e.height > playerHitbox.y) {
-            takeHit();
+            if (state.isPhaseShieldActive) {
+                const scored = (e.isElite || e.isBig) ? 75 : 10;
+                state.score += scored;
+                state.enemiesDefeated++;
+                state.explosions.push({ id: generateId(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: e.isElite || e.isBig ? 'large' : 'small', createdAt: Date.now() });
+                enemiesHitThisFrame.add(e.id);
+            } else {
+                takeHit();
+            }
         }
     });
+    // Remove enemies destroyed by shield contact in this frame
+    if (enemiesHitThisFrame.size > 0) {
+        state.enemies = state.enemies.filter(e => !enemiesHitThisFrame.has(e.id));
+    }
     
     // Items vs Player
     state.items = state.items.filter(item => {
@@ -1496,7 +1687,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     if (totalChars > 0 && state.enemiesDefeated / totalChars >= itemSpawnMilestone.current + itemSpawnThreshold) {
         itemSpawnMilestone.current += itemSpawnThreshold;
         
-        let availableItemTypes: ItemType[] = ['SPEED_UP', 'DIAGONAL_SHOT', 'SIDE_SHOT', 'CANCELLER_SHOT', 'BOMB', 'LASER_BEAM', 'ONE_UP'];
+        let availableItemTypes: ItemType[] = ['SPEED_UP', 'DIAGONAL_SHOT', 'SIDE_SHOT', 'CANCELLER_SHOT', 'RICOCHET_SHOT', 'BOMB', 'LASER_BEAM', 'PHASE_SHIELD', 'ONE_UP'];
         
         if (state.hasDiagonalShot) {
             availableItemTypes = availableItemTypes.filter(t => t !== 'DIAGONAL_SHOT');
@@ -1507,6 +1698,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         if (state.hasCancellerShot) {
             availableItemTypes = availableItemTypes.filter(t => t !== 'CANCELLER_SHOT');
         }
+        // Ricochet is stackable; keep it in the pool
 
         if (availableItemTypes.length > 0) {
             const type = availableItemTypes[Math.floor(Math.random() * availableItemTypes.length)];
@@ -1596,17 +1788,21 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     window.addEventListener('keyup', handleKeyUp);
     
     // ゲームループ開始（音声はユーザーインタラクション後に初期化）
-    gameLoopId.current = requestAnimationFrame(gameLoop);
+    if (!loopStartedRef.current) {
+        loopStartedRef.current = true;
+        gameLoopId.current = requestAnimationFrame(gameLoop);
+    }
 
     return () => {
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
         if (gameLoopId.current) cancelAnimationFrame(gameLoopId.current);
         if (audioContextRef.current) audioContextRef.current.close();
+        loopStartedRef.current = false;
     };
   }, [gameLoop, setupAudio, activateSpecialItem, handleSkip]);
   
-  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate, showGameOverText } = gameStateRef.current;
+  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, isPhaseShieldActive, stockedItemActiveUntil, laserEndTime, phaseShieldEndTime, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate, showGameOverText } = gameStateRef.current;
   const isLastStand = lives === 1;
 
   const getStockedItemIcon = (itemType: SpecialWeapon) => {
@@ -1614,6 +1810,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     switch (itemType) {
         case 'BOMB': return <BombIcon {...props} />;
         case 'LASER_BEAM': return <LaserIcon {...props} />;
+        case 'PHASE_SHIELD': return <PhaseShieldIcon {...props} />;
         default: return null;
     }
   };
@@ -1628,45 +1825,60 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   const allPassiveItemIcons = useMemo(() => {
     const state = gameStateRef.current;
     
-    // Diagonal Shot
+    // Diagonal Shot (unify with InfoPanel: use text-* color)
     const diagonalShotIcon = state.hasDiagonalShot ? (
-      <DiagonalShotIcon key="diag" className="w-5 h-5 fill-green-400"/>
+      <DiagonalShotIcon key="diag" className="w-5 h-5 text-green-400"/>
     ) : (
-      <DiagonalShotIcon key="diag" className="w-5 h-5 fill-gray-500 opacity-50"/>
+      <DiagonalShotIcon key="diag" className="w-5 h-5 !text-gray-500 opacity-50"/>
     );
     
     // Side Shot
     const sideShotIcon = state.hasSideShot ? (
-      <SideShotIcon key="side" className="w-5 h-5 fill-cyan-400"/>
+      <SideShotIcon key="side" className="w-5 h-5 text-cyan-400"/>
     ) : (
-      <SideShotIcon key="side" className="w-5 h-5 fill-gray-500 opacity-50"/>
+      <SideShotIcon key="side" className="w-5 h-5 !text-gray-500 opacity-50"/>
     );
     
     // Canceller Shot
     const cancellerShotIcon = state.hasCancellerShot ? (
-      <CancellerShotIcon key="cancel" className="w-5 h-5 fill-purple-400"/>
+      <CancellerShotIcon key="cancel" className="w-5 h-5 text-purple-400"/>
     ) : (
-      <CancellerShotIcon key="cancel" className="w-5 h-5 fill-gray-500 opacity-50"/>
+      <CancellerShotIcon key="cancel" className="w-5 h-5 !text-gray-500 opacity-50"/>
+    );
+    
+    // Ricochet Shot (stackable) shows count like SpeedUp
+    const ricochetIcon = state.ricochetStacks > 0 ? (
+      <div key="rico" className="flex items-center space-x-0.5">
+        <RicochetShotIcon className="w-5 h-5 text-rose-400"/>
+        <span className="text-xs font-bold text-rose-400">x{state.ricochetStacks}</span>
+      </div>
+    ) : (
+      <div key="rico" className="flex items-center space-x-0.5">
+        <RicochetShotIcon className="w-5 h-5 !text-gray-500 opacity-50"/>
+        <span className="text-xs font-bold text-gray-500 opacity-50">x0</span>
+      </div>
     );
     
     // Speed Up
     const speedUpIcon = state.speedUpCount > 0 ? (
       <div key="speed" className="flex items-center space-x-0.5">
-        <SpeedUpIcon className="w-5 h-5 fill-blue-400"/>
+        <SpeedUpIcon className="w-5 h-5 text-blue-400"/>
         <span className="text-xs font-bold text-blue-400">x{state.speedUpCount}</span>
       </div>
     ) : (
       <div key="speed" className="flex items-center space-x-0.5">
-        <SpeedUpIcon className="w-5 h-5 fill-gray-500 opacity-50"/>
+        <SpeedUpIcon className="w-5 h-5 !text-gray-500 opacity-50"/>
         <span className="text-xs font-bold text-gray-500 opacity-50">x0</span>
       </div>
     );
 
-    return [diagonalShotIcon, sideShotIcon, cancellerShotIcon, speedUpIcon];
+    return [diagonalShotIcon, sideShotIcon, cancellerShotIcon, ricochetIcon, speedUpIcon];
   }, [
       gameStateRef.current.hasDiagonalShot, 
       gameStateRef.current.hasSideShot,
       gameStateRef.current.hasCancellerShot,
+      gameStateRef.current.hasRicochetShot,
+      gameStateRef.current.ricochetStacks,
       gameStateRef.current.speedUpCount
     ]);
 
@@ -1680,6 +1892,14 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     }
 
 
+  // Active item progress for circular timer around slot
+  const nowTs = Date.now();
+  let activeItemProgress = 0; // remaining ratio 0..1
+  if (stockedItem && stockedItemActiveUntil > nowTs) {
+    const total = stockedItem === 'LASER_BEAM' ? LASER_DURATION : stockedItem === 'PHASE_SHIELD' ? PHASE_SHIELD_DURATION : 0;
+    if (total > 0) activeItemProgress = Math.max(0, Math.min(1, (stockedItemActiveUntil - nowTs) / total));
+  }
+
   return (
     <div className="relative bg-slate-900 border-4 border-slate-700" style={{ width: GAME_WIDTH, height: GAME_HEIGHT, userSelect: 'none', cursor: 'none', overflow: 'hidden' }}>
       <audio 
@@ -1692,7 +1912,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       />
       
       {/* Game Objects */}
-      {!isRespawning && !shouldHidePlayer && <PlayerComponent x={playerX} y={playerY} isInvincible={isInvincible} isLastStand={isLastStand} />}
+      {!isRespawning && !shouldHidePlayer && <PlayerComponent x={playerX} y={playerY} isInvincible={isInvincible} isLastStand={isLastStand} hasPhaseShield={isPhaseShieldActive} />}
       {enemies.map(e => <EnemyComponent key={e.id} enemy={e} isLastStand={isLastStand}/>)}
       {projectiles.map(p => <ProjectileComponent key={p.id} p={p} />)}
       {enemyProjectiles.map(p => <EnemyProjectileComponent key={p.id} p={p} />)}
@@ -1725,10 +1945,9 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       <div className="absolute top-0 left-0 right-0 p-3 text-white font-orbitron text-shadow-md flex justify-between items-start">
         <div className="text-left">
             {/* LIVES Display with Border */}
-            <div className="p-2 bg-transparent border-2 border-slate-600 rounded-lg">
-                <div className="flex items-center">
-                    {[...Array(Math.max(0, lives - 1))].map((_, i) => <PlayerShipIcon key={i} className={`w-6 h-6 mr-1 ${isLastStand ? 'text-red-500' : 'text-cyan-400'}`} />)}
-                </div>
+            <div className="inline-flex items-center w-fit p-2 bg-transparent border-2 border-slate-600 rounded-lg">
+                <PlayerShipIcon className={`w-6 h-6 mr-2 ${isLastStand ? 'text-red-500' : 'text-cyan-400'}`} />
+                <span className="text-white font-bold">x{lives}</span>
             </div>
             {/* Passive Items Display with Border */}
             <div className="mt-2 p-2 bg-transparent border-2 border-slate-600 rounded-lg">
@@ -1736,11 +1955,23 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     {allPassiveItemIcons}
                 </div>
             </div>
-            {/* Special Item Slot with Progress Bar */}
+            {/* Special Item Slot with Progress Circle */}
             <div className="mt-3 flex items-center space-x-2">
-                {/* Item Slot */}
-                <div className="w-12 h-12 bg-slate-800 border-2 border-slate-600 rounded-lg flex items-center justify-center" title="Special Item (SHIFT or TAB)">
-                    {stockedItem && getStockedItemIcon(stockedItem)}
+                {/* Item Slot with circular timer */}
+                <div className="relative" title="Special Item (SHIFT or TAB)">
+                    <div className="w-12 h-12 bg-slate-800 border-2 border-slate-600 rounded-lg flex items-center justify-center">
+                        {stockedItem && (
+                          <div className={stockedItemActiveUntil > nowTs ? 'opacity-50' : ''}>
+                            {getStockedItemIcon(stockedItem)}
+                          </div>
+                        )}
+                    </div>
+                    {/* Progress circle overlay when active */}
+                    {activeItemProgress > 0 && (
+                      <div className="absolute -inset-1 pointer-events-none">
+                        <ProgressCircle size={56} strokeWidth={4} progress={activeItemProgress} className="text-amber-400" trackClassName="text-slate-700" />
+                      </div>
+                    )}
                 </div>
                 {/* Vertical Progress Bar */}
                 <div className="w-1 h-12 bg-slate-600 rounded-full relative" title="Progress to next item drop">

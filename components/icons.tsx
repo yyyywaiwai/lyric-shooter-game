@@ -66,6 +66,26 @@ export const LaserIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNode
     </svg>
 );
 
+export const PhaseShieldIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNode => (
+  <svg
+    {...props}
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`text-sky-300 ${props.className || ''}`}
+  >
+    {/* Shield */}
+    <path d="M12 2l7 3v6c0 5-3.5 9-7 11-3.5-2-7-6-7-11V5l7-3z" fill="currentColor" opacity="0.25"/>
+    <path d="M12 2l7 3v6c0 5-3.5 9-7 11-3.5-2-7-6-7-11V5l7-3z" />
+    {/* Phase spark */}
+    <circle cx="12" cy="10" r="2" fill="currentColor" />
+  </svg>
+);
+
 export const OneUpIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNode => (
     <svg
         {...props}
@@ -116,3 +136,21 @@ export const CancellerShotIcon = (props: React.SVGProps<SVGSVGElement>): React.R
         <path d="M4.93 17.66l12.73-12.73 1.41 1.41L6.34 19.07z" />
     </svg>
 );
+
+export const RicochetShotIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNode => (
+  <svg
+    {...props}
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`text-rose-400 ${props.className || ''}`}
+  >
+    {/* Corner-left arrow (centered to chevron) */}
+    <path d="M20 4v4a4 4 0 0 1-4 4H9" />
+    <polyline points="9 8 5 12 9 16" />
+  </svg>
+  );

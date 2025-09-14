@@ -57,7 +57,13 @@ export interface Enemy extends GameObject {
 
 export interface Projectile extends GameObject {
   speedY: number;
-  speedX?: number; // For diagonal shots
+  speedX?: number; // For diagonal shots and ricochet steering
+  // Ricochet flags
+  isRicochetPrimary?: boolean; // true for the 1st-stage red bullet
+  hasBounced?: boolean; // true for the spawned ricocheted bullet
+  // Ricochet chain support
+  remainingBounces?: number; // how many more ricochets this projectile can spawn
+  rotationDeg?: number; // visual rotation for bounced shots
 }
 
 export interface EnemyProjectile extends GameObject {
@@ -74,8 +80,15 @@ export interface Mine extends GameObject {
     createdAt: number;
 }
 
-export type SpecialWeapon = 'BOMB' | 'LASER_BEAM';
-export type ItemType = SpecialWeapon | 'SPEED_UP' | 'DIAGONAL_SHOT' | 'ONE_UP' | 'SIDE_SHOT' | 'CANCELLER_SHOT';
+export type SpecialWeapon = 'BOMB' | 'LASER_BEAM' | 'PHASE_SHIELD';
+export type ItemType =
+  | SpecialWeapon
+  | 'SPEED_UP'
+  | 'DIAGONAL_SHOT'
+  | 'ONE_UP'
+  | 'SIDE_SHOT'
+  | 'CANCELLER_SHOT'
+  | 'RICOCHET_SHOT';
 
 export interface Item extends GameObject {
     type: ItemType;

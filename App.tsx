@@ -3,7 +3,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { LyricLine, GameStatus, GameStats, ItemType, SongMetadata } from './types';
 import FileUploader from './components/FileUploader';
 import GameScreen from './components/GameScreen';
-import { BombIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, SpeedUpIcon, SideShotIcon, CancellerShotIcon } from './components/icons';
+import { BombIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, SpeedUpIcon, SideShotIcon, CancellerShotIcon, RicochetShotIcon, PhaseShieldIcon } from './components/icons';
 
 const InfoPanel = () => (
     <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 max-w-4xl mx-auto p-4 bg-slate-800 bg-opacity-70 rounded-lg text-left">
@@ -16,6 +16,8 @@ const InfoPanel = () => (
                 <li className="flex items-center"><DiagonalShotIcon className="w-8 h-8 mr-4 flex-shrink-0" /><p><span className="font-bold">Diagonal Shot:</span> Adds diagonal shots (fires every 3rd shot). Slightly increases enemy shooter chance. Cannot be stacked.</p></li>
                 <li className="flex items-center"><SideShotIcon className="w-8 h-8 mr-4 flex-shrink-0" /><p><span className="font-bold">Side Shot:</span> Fires projectiles to the left and right (fires every 2nd shot). Cannot be stacked.</p></li>
                 <li className="flex items-center"><CancellerShotIcon className="w-8 h-8 mr-4 flex-shrink-0" /><p><span className="font-bold">Canceller Shot:</span> Your projectiles destroy enemy projectiles on contact. Grants a chance to nullify incoming damage. Cannot be stacked.</p></li>
+                <li className="flex items-center"><RicochetShotIcon className="w-8 h-8 mr-4 flex-shrink-0" /><p><span className="font-bold">Ricochet Shot:</span> Every main shot is a red ricochet. On enemy hit or canceller clash, it jumps to the nearest enemy. Stack to increase the number of jumps; each jump reduces bullet speed by 70% (<span className="text-rose-300 font-semibold">no reduction during Last Stand</span>). After bouncing, the bullet becomes a round red orb.</p></li>
+                <li className="flex items-center"><PhaseShieldIcon className="w-8 h-8 mr-4 flex-shrink-0" /><p><span className="font-bold">Phase Shield (Active):</span> Become invincible for 3s and damage enemies on touch. If you own Canceller, enemy bullets that hit you are reflected. The item slot shows a circular timer while active.</p></li>
                 <li className="flex items-center"><OneUpIcon className="w-8 h-8 mr-4 flex-shrink-0" /><p><span className="font-bold">1UP:</span> Grants an extra life.</p></li>
             </ul>
         </div>
@@ -91,11 +93,13 @@ const getItemIcon = (itemType: ItemType, props?: React.SVGProps<SVGSVGElement>) 
     switch (itemType) {
         case 'BOMB': return <BombIcon {...iconProps} />;
         case 'LASER_BEAM': return <LaserIcon {...iconProps} />;
+        case 'PHASE_SHIELD': return <PhaseShieldIcon {...iconProps} />;
         case 'SPEED_UP': return <SpeedUpIcon {...iconProps} />;
         case 'DIAGONAL_SHOT': return <DiagonalShotIcon {...iconProps} />;
         case 'ONE_UP': return <OneUpIcon {...iconProps} />;
         case 'SIDE_SHOT': return <SideShotIcon {...iconProps} />;
         case 'CANCELLER_SHOT': return <CancellerShotIcon {...iconProps} />;
+        case 'RICOCHET_SHOT': return <RicochetShotIcon {...iconProps} />;
         default: return null;
     }
 };
@@ -163,7 +167,7 @@ const SongInfo = ({ metadata }: { metadata: SongMetadata }) => (
 );
 
 const ItemSelection = ({ onSelect }: { onSelect: (item: ItemType) => void }) => {
-    const items: ItemType[] = ['SPEED_UP', 'DIAGONAL_SHOT', 'SIDE_SHOT', 'CANCELLER_SHOT', 'ONE_UP', 'BOMB'];
+    const items: ItemType[] = ['SPEED_UP', 'DIAGONAL_SHOT', 'SIDE_SHOT', 'CANCELLER_SHOT', 'RICOCHET_SHOT', 'ONE_UP', 'BOMB', 'PHASE_SHIELD', 'LASER_BEAM'];
     
     return (
         <div className="p-6 bg-slate-900 border-2 border-red-500 rounded-lg mt-6">

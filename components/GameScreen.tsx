@@ -779,7 +779,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
 
         // Create new projectile object for proper React re-rendering
-        const isRicochetPrimary = state.hasRicochetShot; // now every main shot if owned
+        // Nerf: ricochet triggers once every 2 main shots (deterministic alternate)
+        const isRicochetPrimary = state.hasRicochetShot && (state.mainShotCounter % 2 === 0);
         state.projectiles.push({ 
             id: generateId(), 
             x: pX, 

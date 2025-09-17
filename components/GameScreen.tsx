@@ -779,8 +779,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
 
         // Create new projectile object for proper React re-rendering
-        // Nerf: ricochet triggers once every 2 main shots (deterministic alternate)
-        const isRicochetPrimary = state.hasRicochetShot && (state.mainShotCounter % 2 === 0);
+        // Ricochet triggers every shot during Last Stand, otherwise every other shot
+        const isRicochetPrimary = state.hasRicochetShot && (isLastStand || state.mainShotCounter % 2 === 0);
         state.projectiles.push({ 
             id: generateId(), 
             x: pX, 

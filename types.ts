@@ -12,8 +12,16 @@ export interface GameObject {
 }
 
 export type MovementPattern = 'STRAIGHT_DOWN' | 'SINE_WAVE' | 'ZIG_ZAG' | 'DRIFTING' | 'ACCELERATING';
-export type ShooterAttackPattern = 'HOMING' | 'STRAIGHT_DOWN' | 'DELAYED_HOMING' | 'SPIRAL';
-export type EliteShooterType = 'MAGIC' | 'GATLING' | 'LANDMINE' | 'LASER';
+export type ShooterAttackPattern =
+  | 'HOMING'
+  | 'STRAIGHT_DOWN'
+  | 'DELAYED_HOMING'
+  | 'SPIRAL'
+  | 'BEAT'
+  | 'SIDE'
+  | 'DECELERATE'
+  | 'CIRCLE';
+export type EliteShooterType = 'MAGIC' | 'GATLING' | 'LANDMINE' | 'LASER' | 'CIRCLE';
 
 export interface Enemy extends GameObject {
   char: string;
@@ -67,13 +75,34 @@ export interface Projectile extends GameObject {
 }
 
 export interface EnemyProjectile extends GameObject {
-    speedX: number;
-    speedY: number;
-    attackPattern: ShooterAttackPattern;
+  speedX: number;
+  speedY: number;
+  attackPattern: ShooterAttackPattern;
 
-    // For DELAYED_HOMING
-    isDelayed?: boolean;
-    delayEndTime?: number;
+  // For DELAYED_HOMING
+  isDelayed?: boolean;
+  delayEndTime?: number;
+
+  // For BEAT pattern diagnostics
+  beatTargetSide?: 'LEFT' | 'RIGHT';
+
+  // For DECELERATE behavior
+  initialSpeed?: number;
+  slowSpeed?: number;
+  decelerateInitialDistance?: number;
+  directionX?: number;
+  directionY?: number;
+
+  // For CIRCLE behavior
+  circleMode?: 'APPROACH' | 'GUIDE_ORBIT' | 'ORBIT' | 'GUIDE_DROP' | 'DROP';
+  circleGuideUntil?: number;
+  orbitCenterX?: number;
+  orbitCenterY?: number;
+  orbitRadius?: number;
+  orbitAngle?: number;
+  orbitAngularSpeed?: number;
+  orbitAccumulatedAngle?: number;
+  orbitDirection?: 1 | -1;
 }
 
 export interface Mine extends GameObject {

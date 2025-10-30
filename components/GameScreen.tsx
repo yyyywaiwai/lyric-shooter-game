@@ -127,6 +127,18 @@ const FLOATING_TEXT_DURATION = 1000;
 const RICOCHET_SPEED_FACTOR = 0.3; // 70% slower after each bounce (disabled during Last Stand)
 const RICOCHET_DIAMETER = 10; // visual/collision size for bounced bullets
 const PHASE_SHIELD_DURATION = 3000; // ms
+const BEAT_SPEED_MIN_INTERVAL = 2000;
+const BEAT_SPEED_MAX_INTERVAL = 8000;
+const BEAT_MAX_SPEED_MULTIPLIER = 3;
+const BEAT_TARGET_OFFSET = PLAYER_WIDTH;
+const DECELERATE_INITIAL_MULTIPLIER = 2;
+const DECELERATE_FINAL_MULTIPLIER = 0.4;
+const CIRCLE_TRIGGER_RADIUS = 120;
+const CIRCLE_ORBIT_LOOPS = 1;
+const CIRCLE_ORBIT_ANGULAR_SPEED = Math.PI; // radians per second
+const CIRCLE_MIN_ORBIT_RADIUS = 40;
+const CIRCLE_GUIDE_DURATION = 400; // ms
+const CIRCLE_GUIDE_SEGMENTS = 48;
 
 interface GameScreenProps {
   audioUrl: string;
@@ -189,6 +201,9 @@ const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLas
             case 'LASER':
                 colorClass = 'text-cyan-300';
                 break;
+            case 'CIRCLE':
+                colorClass = 'text-sky-400';
+                break;
             default:
                 colorClass = 'text-purple-400';
         }
@@ -198,7 +213,11 @@ const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLas
             'STRAIGHT_DOWN': 'text-yellow-400',
             'DELAYED_HOMING': 'text-orange-400',
             'SPIRAL': 'text-teal-400',
-        }[enemy.attackPattern || 'HOMING'];
+            'BEAT': 'text-indigo-400',
+            'SIDE': 'text-amber-400',
+            'DECELERATE': 'text-rose-400',
+            'CIRCLE': 'text-cyan-400',
+        }[enemy.attackPattern || 'HOMING'] || 'text-fuchsia-400';
     }
 
     const sizeClass = enemy.isElite || enemy.isBig ? 'text-4xl' : 'text-3xl';
@@ -231,12 +250,17 @@ const ProjectileComponent = React.memo(({ p }: { p: Projectile }) => {
 });
 
 const EnemyProjectileComponent = React.memo(({ p }: { p: EnemyProjectile }) => {
-    const projectileColor = {
+    const projectileColors: Record<ShooterAttackPattern, string> = {
         'HOMING': 'bg-fuchsia-500',
         'STRAIGHT_DOWN': 'bg-yellow-500',
         'DELAYED_HOMING': 'bg-orange-500',
         'SPIRAL': 'bg-teal-500',
-    }[p.attackPattern];
+        'BEAT': 'bg-indigo-500',
+        'SIDE': 'bg-amber-500',
+        'DECELERATE': 'bg-rose-500',
+        'CIRCLE': 'bg-cyan-400',
+    };
+    const projectileColor = projectileColors[p.attackPattern] || 'bg-slate-400';
     
     const sizeClass = 'w-2 h-2';
     const opacityClass = p.attackPattern === 'DELAYED_HOMING' && p.isDelayed ? 'opacity-50' : 'opacity-100';
@@ -362,7 +386,33 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   
   const enemyProjectilePool = useRef(new ObjectPool<EnemyProjectile>(
     () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN' }),
-    (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = 8; obj.height = 8; obj.speedX = 0; obj.speedY = 0; obj.attackPattern = 'STRAIGHT_DOWN'; obj.isDelayed = false; obj.delayEndTime = undefined; }
+    (obj) => {
+      obj.id = 0;
+      obj.x = 0;
+      obj.y = 0;
+      obj.width = 8;
+      obj.height = 8;
+      obj.speedX = 0;
+      obj.speedY = 0;
+      obj.attackPattern = 'STRAIGHT_DOWN';
+      obj.isDelayed = false;
+      obj.delayEndTime = undefined;
+      obj.beatTargetSide = undefined;
+      obj.initialSpeed = undefined;
+      obj.slowSpeed = undefined;
+      obj.circleMode = undefined;
+      obj.orbitCenterX = undefined;
+      obj.orbitCenterY = undefined;
+      obj.orbitRadius = undefined;
+      obj.orbitAngle = undefined;
+      obj.orbitAngularSpeed = undefined;
+      obj.orbitAccumulatedAngle = undefined;
+      obj.orbitDirection = undefined;
+      obj.directionX = undefined;
+      obj.directionY = undefined;
+      obj.decelerateInitialDistance = undefined;
+      obj.circleGuideUntil = undefined;
+    }
   ));
   
   const explosionPool = useRef(new ObjectPool<Explosion>(
@@ -888,21 +938,159 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     state.projectiles = state.projectiles.map(p => ({ ...p, y: p.y - p.speedY * dt, x: p.x + (p.speedX || 0) * dt })).filter(p => p.y > -p.height && p.y < GAME_HEIGHT && p.x > -p.width && p.x < GAME_WIDTH);
     
     const currentEnemyProjectileSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
+    const fireBeatShooters = (triggerTime: number) => {
+        const baseSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
+        const playerCenterX = state.playerX + PLAYER_WIDTH / 2;
+        const playerCenterY = state.playerY + PLAYER_HEIGHT / 2;
+        state.enemies.forEach(enemy => {
+            if (!enemy.isShooter || enemy.attackPattern !== 'BEAT') return;
+            if (enemy.y + enemy.height < 0) return;
+            const enemyCenterX = enemy.x + enemy.width / 2;
+            const enemyMuzzleY = enemy.y + enemy.height;
+            const lastShot = enemy.lastShotTime ?? (triggerTime - BEAT_SPEED_MIN_INTERVAL);
+            const interval = Math.max(0, triggerTime - lastShot);
+            const clampedInterval = Math.min(BEAT_SPEED_MAX_INTERVAL, Math.max(BEAT_SPEED_MIN_INTERVAL, interval));
+            const t = (clampedInterval - BEAT_SPEED_MIN_INTERVAL) / (BEAT_SPEED_MAX_INTERVAL - BEAT_SPEED_MIN_INTERVAL);
+            const speedMultiplier = 1 + t * (BEAT_MAX_SPEED_MULTIPLIER - 1);
+            const projectileSpeed = baseSpeed * speedMultiplier;
+            [-BEAT_TARGET_OFFSET, BEAT_TARGET_OFFSET].forEach(offset => {
+                const targetX = playerCenterX + offset;
+                const targetY = playerCenterY;
+                const dx = targetX - enemyCenterX;
+                const dy = targetY - enemyMuzzleY;
+                const distance = Math.hypot(dx, dy) || 1;
+                const proj = enemyProjectilePool.current.get();
+                proj.id = generateId();
+                proj.x = enemyCenterX;
+                proj.y = enemyMuzzleY;
+                proj.width = 8;
+                proj.height = 8;
+                proj.attackPattern = 'BEAT';
+                proj.speedX = (dx / distance) * projectileSpeed;
+                proj.speedY = (dy / distance) * projectileSpeed;
+                proj.beatTargetSide = offset < 0 ? 'LEFT' : 'RIGHT';
+                state.enemyProjectiles.push(proj);
+            });
+            enemy.lastShotTime = triggerTime;
+        });
+    };
 
     // Update enemy projectiles
+    const playerCenterX = state.playerX + PLAYER_WIDTH / 2;
+    const playerCenterY = state.playerY + PLAYER_HEIGHT / 2;
     state.enemyProjectiles = state.enemyProjectiles.map(p => {
         const updatedProjectile = { ...p };
 
-        if (updatedProjectile.attackPattern === 'DELAYED_HOMING' && updatedProjectile.isDelayed && currentTime > updatedProjectile.delayEndTime!) {
-            updatedProjectile.isDelayed = false;
-            const angle = Math.atan2((state.playerY + PLAYER_HEIGHT / 2) - updatedProjectile.y, (state.playerX + PLAYER_WIDTH / 2) - updatedProjectile.x);
-            updatedProjectile.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 1.5;
-            updatedProjectile.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 1.5;
-            updatedProjectile.x += updatedProjectile.speedX * dt;
-            updatedProjectile.y += updatedProjectile.speedY * dt;
-        } else if (!(updatedProjectile.attackPattern === 'DELAYED_HOMING' && updatedProjectile.isDelayed)) {
-            updatedProjectile.x += updatedProjectile.speedX * dt;
-            updatedProjectile.y += updatedProjectile.speedY * dt;
+        switch (updatedProjectile.attackPattern) {
+            case 'DELAYED_HOMING': {
+                if (updatedProjectile.isDelayed) {
+                    if (currentTime > (updatedProjectile.delayEndTime || 0)) {
+                        updatedProjectile.isDelayed = false;
+                        const angle = Math.atan2(playerCenterY - updatedProjectile.y, playerCenterX - updatedProjectile.x);
+                        updatedProjectile.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 1.5;
+                        updatedProjectile.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 1.5;
+                        updatedProjectile.x += updatedProjectile.speedX * dt;
+                        updatedProjectile.y += updatedProjectile.speedY * dt;
+                    }
+                } else {
+                    updatedProjectile.x += updatedProjectile.speedX * dt;
+                    updatedProjectile.y += updatedProjectile.speedY * dt;
+                }
+                break;
+            }
+            case 'DECELERATE': {
+                let directionX = updatedProjectile.directionX;
+                let directionY = updatedProjectile.directionY;
+                if (directionX === undefined || directionY === undefined) {
+                    const currentLen = Math.hypot(updatedProjectile.speedX, updatedProjectile.speedY) || 1;
+                    directionX = updatedProjectile.speedX / currentLen;
+                    directionY = updatedProjectile.speedY / currentLen;
+                    updatedProjectile.directionX = directionX;
+                    updatedProjectile.directionY = directionY;
+                }
+
+                const initialSpeed = updatedProjectile.initialSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_INITIAL_MULTIPLIER);
+                const finalSpeed = updatedProjectile.slowSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_FINAL_MULTIPLIER);
+
+                const initialDistance = updatedProjectile.decelerateInitialDistance
+                    ?? Math.max(1, Math.hypot(playerCenterX - updatedProjectile.x, playerCenterY - updatedProjectile.y));
+                updatedProjectile.decelerateInitialDistance = initialDistance;
+
+                const distanceToPlayer = Math.hypot(playerCenterX - updatedProjectile.x, playerCenterY - updatedProjectile.y);
+                const clampedDistance = Math.min(Math.max(distanceToPlayer, 0), initialDistance);
+                const progress = initialDistance > 0 ? 1 - (clampedDistance / initialDistance) : 1;
+                const easedProgress = Math.min(Math.max(progress, 0), 1);
+                const targetSpeed = initialSpeed - (initialSpeed - finalSpeed) * easedProgress;
+
+                updatedProjectile.speedX = (directionX || 0) * targetSpeed;
+                updatedProjectile.speedY = (directionY || 0) * targetSpeed;
+                updatedProjectile.x += updatedProjectile.speedX * dt;
+                updatedProjectile.y += updatedProjectile.speedY * dt;
+                break;
+            }
+            case 'CIRCLE': {
+                const mode = updatedProjectile.circleMode || 'APPROACH';
+                if (mode === 'APPROACH') {
+                    updatedProjectile.x += updatedProjectile.speedX * dt;
+                    updatedProjectile.y += updatedProjectile.speedY * dt;
+                    const distanceToPlayer = Math.hypot(playerCenterX - updatedProjectile.x, playerCenterY - updatedProjectile.y);
+                    if (distanceToPlayer <= CIRCLE_TRIGGER_RADIUS) {
+                        updatedProjectile.circleMode = 'GUIDE_ORBIT';
+                        updatedProjectile.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
+                        updatedProjectile.orbitCenterX = playerCenterX;
+                        updatedProjectile.orbitCenterY = playerCenterY;
+                        updatedProjectile.orbitRadius = Math.max(
+                          CIRCLE_MIN_ORBIT_RADIUS,
+                          Math.hypot(updatedProjectile.x - playerCenterX, updatedProjectile.y - playerCenterY)
+                        );
+                        updatedProjectile.orbitAngle = Math.atan2(
+                          updatedProjectile.y - playerCenterY,
+                          updatedProjectile.x - playerCenterX
+                        );
+                        updatedProjectile.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
+                        updatedProjectile.orbitAccumulatedAngle = 0;
+                        updatedProjectile.orbitDirection = updatedProjectile.orbitDirection || (Math.random() > 0.5 ? 1 : -1);
+                        updatedProjectile.speedX = 0;
+                        updatedProjectile.speedY = 0;
+                    }
+                } else if (mode === 'GUIDE_ORBIT') {
+                    if (currentTime >= (updatedProjectile.circleGuideUntil || 0)) {
+                        updatedProjectile.circleMode = 'ORBIT';
+                        updatedProjectile.circleGuideUntil = undefined;
+                    }
+                } else if (mode === 'ORBIT') {
+                    const angularSpeed = (updatedProjectile.orbitAngularSpeed || CIRCLE_ORBIT_ANGULAR_SPEED) * (updatedProjectile.orbitDirection || 1);
+                    updatedProjectile.orbitAngle = (updatedProjectile.orbitAngle || 0) + angularSpeed * dt;
+                    updatedProjectile.orbitAccumulatedAngle = (updatedProjectile.orbitAccumulatedAngle || 0) + Math.abs(angularSpeed * dt);
+                    const radius = updatedProjectile.orbitRadius || CIRCLE_MIN_ORBIT_RADIUS;
+                    updatedProjectile.x = (updatedProjectile.orbitCenterX || playerCenterX) + Math.cos(updatedProjectile.orbitAngle!) * radius;
+                    updatedProjectile.y = (updatedProjectile.orbitCenterY || playerCenterY) + Math.sin(updatedProjectile.orbitAngle!) * radius;
+                    if ((updatedProjectile.orbitAccumulatedAngle || 0) >= Math.PI * 2 * CIRCLE_ORBIT_LOOPS) {
+                        updatedProjectile.circleMode = 'GUIDE_DROP';
+                        updatedProjectile.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
+                        updatedProjectile.speedX = 0;
+                        updatedProjectile.speedY = 0;
+                    }
+                } else if (mode === 'GUIDE_DROP') {
+                    if (currentTime >= (updatedProjectile.circleGuideUntil || 0)) {
+                        updatedProjectile.circleMode = 'DROP';
+                        updatedProjectile.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
+                        updatedProjectile.speedX = 0;
+                        updatedProjectile.speedY = currentEnemyProjectileSpeed;
+                    }
+                } else { // DROP
+                    if (updatedProjectile.circleGuideUntil !== undefined && currentTime >= updatedProjectile.circleGuideUntil) {
+                        updatedProjectile.circleGuideUntil = undefined;
+                    }
+                    updatedProjectile.x += updatedProjectile.speedX * dt;
+                    updatedProjectile.y += updatedProjectile.speedY * dt;
+                }
+                break;
+            }
+            default: {
+                updatedProjectile.x += updatedProjectile.speedX * dt;
+                updatedProjectile.y += updatedProjectile.speedY * dt;
+            }
         }
 
         return updatedProjectile;
@@ -951,6 +1139,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     // --- Enemy Firing ---
     state.enemies.forEach(enemy => {
         if (!enemy.isShooter) return;
+        if (enemy.attackPattern === 'BEAT') return;
         const cooldown = enemy.isElite && enemy.eliteType === 'MAGIC' ? ENEMY_FIRE_COOLDOWN / 3.5 : ENEMY_FIRE_COOLDOWN;
         if (currentTime - (enemy.lastShotTime || 0) > cooldown && !enemy.gatlingCooldown) {
             
@@ -964,6 +1153,33 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                             enemy.lastShotTime = currentTime;
                         }
                         break;
+                    case 'CIRCLE': {
+                        enemy.lastShotTime = currentTime;
+                        enemy.attackPattern = 'CIRCLE';
+                        const projectileBase = { id: currentTime + enemy.id, x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: 8, height: 8 };
+                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
+                        const approachSpeed = currentEnemyProjectileSpeed;
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = generateId();
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'CIRCLE';
+                        proj.speedX = Math.cos(angle) * approachSpeed;
+                        proj.speedY = Math.sin(angle) * approachSpeed;
+                        proj.circleMode = 'APPROACH';
+                        proj.circleGuideUntil = undefined;
+                        proj.orbitCenterX = undefined;
+                        proj.orbitCenterY = undefined;
+                        proj.orbitRadius = undefined;
+                        proj.orbitAngle = undefined;
+                        proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
+                        proj.orbitAccumulatedAngle = 0;
+                        proj.orbitDirection = Math.random() > 0.5 ? 1 : -1;
+                        state.enemyProjectiles.push(proj);
+                        break;
+                    }
                     case 'LANDMINE':
                         enemy.lastShotTime = currentTime;
                         state.mines.push({ id: generateId(), x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: MINE_WIDTH, height: MINE_HEIGHT, createdAt: currentTime });
@@ -1045,6 +1261,43 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                                 }
                                 break;
                             }
+                            case 'CIRCLE': {
+                                const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
+                                const approachSpeed = currentEnemyProjectileSpeed;
+                                const proj = enemyProjectilePool.current.get();
+                                proj.id = generateId();
+                                proj.x = projectileBase.x;
+                                proj.y = projectileBase.y;
+                                proj.width = projectileBase.width;
+                                proj.height = projectileBase.height;
+                                proj.attackPattern = 'CIRCLE';
+                                proj.speedX = Math.cos(angle) * approachSpeed;
+                                proj.speedY = Math.sin(angle) * approachSpeed;
+                                proj.circleMode = 'APPROACH';
+                                proj.circleGuideUntil = undefined;
+                                proj.orbitCenterX = undefined;
+                                proj.orbitCenterY = undefined;
+                                proj.orbitRadius = undefined;
+                                proj.orbitAngle = undefined;
+                                proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
+                                proj.orbitAccumulatedAngle = 0;
+                                proj.orbitDirection = Math.random() > 0.5 ? 1 : -1;
+                                state.enemyProjectiles.push(proj);
+                                break;
+                            }
+                            default: {
+                                const proj = enemyProjectilePool.current.get();
+                                proj.id = generateId();
+                                proj.x = projectileBase.x;
+                                proj.y = projectileBase.y;
+                                proj.width = projectileBase.width;
+                                proj.height = projectileBase.height;
+                                proj.attackPattern = 'STRAIGHT_DOWN';
+                                proj.speedX = 0;
+                                proj.speedY = currentEnemyProjectileSpeed;
+                                state.enemyProjectiles.push(proj);
+                                break;
+                            }
                         }
                         break;
                     }
@@ -1110,6 +1363,98 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                         state.enemyProjectiles.push(proj);
                         break;
                     }
+                    case 'SIDE': {
+                        const horizontalSpeed = currentEnemyProjectileSpeed * 0.75;
+                        const verticalSpeed = currentEnemyProjectileSpeed * 0.85;
+
+                        const leftProj = enemyProjectilePool.current.get();
+                        leftProj.id = generateId();
+                        leftProj.x = enemy.x;
+                        leftProj.y = projectileBase.y;
+                        leftProj.width = projectileBase.width;
+                        leftProj.height = projectileBase.height;
+                        leftProj.attackPattern = 'SIDE';
+                        leftProj.speedX = -horizontalSpeed;
+                        leftProj.speedY = verticalSpeed;
+                        state.enemyProjectiles.push(leftProj);
+
+                        const rightProj = enemyProjectilePool.current.get();
+                        rightProj.id = generateId();
+                        rightProj.x = enemy.x + enemy.width;
+                        rightProj.y = projectileBase.y;
+                        rightProj.width = projectileBase.width;
+                        rightProj.height = projectileBase.height;
+                        rightProj.attackPattern = 'SIDE';
+                        rightProj.speedX = horizontalSpeed;
+                        rightProj.speedY = verticalSpeed;
+                        state.enemyProjectiles.push(rightProj);
+                        break;
+                    }
+                    case 'DECELERATE': {
+                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
+                        const fastSpeed = currentEnemyProjectileSpeed * DECELERATE_INITIAL_MULTIPLIER;
+                        const dirX = Math.cos(angle);
+                        const dirY = Math.sin(angle);
+                        const slowSpeed = currentEnemyProjectileSpeed * DECELERATE_FINAL_MULTIPLIER;
+                        const initialDistance = Math.max(1, Math.hypot(
+                          (state.playerX + PLAYER_WIDTH / 2) - projectileBase.x,
+                          (state.playerY + PLAYER_HEIGHT / 2) - projectileBase.y
+                        ));
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = generateId();
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'DECELERATE';
+                        proj.directionX = dirX;
+                        proj.directionY = dirY;
+                        proj.speedX = dirX * fastSpeed;
+                        proj.speedY = dirY * fastSpeed;
+                        proj.initialSpeed = fastSpeed;
+                        proj.slowSpeed = slowSpeed;
+                        proj.decelerateInitialDistance = initialDistance;
+                        state.enemyProjectiles.push(proj);
+                        break;
+                    }
+                    case 'CIRCLE': {
+                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
+                        const approachSpeed = currentEnemyProjectileSpeed;
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = generateId();
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'CIRCLE';
+                        proj.speedX = Math.cos(angle) * approachSpeed;
+                        proj.speedY = Math.sin(angle) * approachSpeed;
+                        proj.circleMode = 'APPROACH';
+                        proj.circleGuideUntil = undefined;
+                        proj.orbitCenterX = undefined;
+                        proj.orbitCenterY = undefined;
+                        proj.orbitRadius = undefined;
+                        proj.orbitAngle = undefined;
+                        proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
+                        proj.orbitAccumulatedAngle = 0;
+                        proj.orbitDirection = Math.random() > 0.5 ? 1 : -1;
+                        state.enemyProjectiles.push(proj);
+                        break;
+                    }
+                    default: {
+                        // Fallback to straight down if pattern not handled
+                        const proj = enemyProjectilePool.current.get();
+                        proj.id = generateId();
+                        proj.x = projectileBase.x;
+                        proj.y = projectileBase.y;
+                        proj.width = projectileBase.width;
+                        proj.height = projectileBase.height;
+                        proj.attackPattern = 'STRAIGHT_DOWN';
+                        proj.speedX = 0;
+                        proj.speedY = currentEnemyProjectileSpeed;
+                        state.enemyProjectiles.push(proj);
+                        break;
+                    }
                 }
             }
         }
@@ -1148,6 +1493,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         const line = lyrics[state.currentLyricIndex].text.replace(/\s/g, '');
         let charIndex = 0;
         const spawnInterval = 100 / Math.max(1, line.length);
+        fireBeatShooters(currentTime);
         const spawnChar = () => {
           if (charIndex < line.length) {
             const char = line[charIndex];
@@ -1155,8 +1501,9 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             const movementPatterns: MovementPattern[] = ['STRAIGHT_DOWN', 'SINE_WAVE', 'ZIG_ZAG', 'DRIFTING', 'ACCELERATING'];
             const movementPattern = movementPatterns[Math.floor(Math.random() * movementPatterns.length)];
             
-            const shooterAttackPatterns: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL'];
-            const attackPattern = shooterAttackPatterns[Math.floor(Math.random() * shooterAttackPatterns.length)];
+            const normalShooterPatterns: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL', 'BEAT', 'SIDE', 'DECELERATE'];
+            const legacyShooterPatterns: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL'];
+            let attackPattern: ShooterAttackPattern | undefined = undefined;
 
             let shooterChance = state.baseShooterChance;
 
@@ -1167,6 +1514,9 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             else if (progress > 0.25) shooterChance += 0.05;
 
             const isShooter = Math.random() < shooterChance;
+            if (isShooter) {
+                attackPattern = normalShooterPatterns[Math.floor(Math.random() * normalShooterPatterns.length)];
+            }
 
             let isElite = false;
             let eliteType: EliteShooterType | undefined = undefined;
@@ -1176,8 +1526,12 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
             if (isShooter && progress >= eliteShooterProgressThreshold && Math.random() < eliteShooterChance) {
                 isElite = true;
-                const eliteTypes: EliteShooterType[] = ['MAGIC', 'GATLING', 'LANDMINE', 'LASER'];
+                const eliteTypes: EliteShooterType[] = ['MAGIC', 'GATLING', 'LANDMINE', 'LASER', 'CIRCLE'];
                 eliteType = eliteTypes[Math.floor(Math.random() * eliteTypes.length)];
+                attackPattern = legacyShooterPatterns[Math.floor(Math.random() * legacyShooterPatterns.length)];
+                if (eliteType === 'CIRCLE') {
+                    attackPattern = 'CIRCLE';
+                }
             }
 
             const enemy: Enemy = {
@@ -1806,6 +2160,69 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, isPhaseShieldActive, stockedItemActiveUntil, laserEndTime, phaseShieldEndTime, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate, showGameOverText } = gameStateRef.current;
   const isLastStand = lives === 1;
 
+  const renderGuideLine = (start: { x: number; y: number }, end: { x: number; y: number }, key: string, thickness = 2, opacity = 0.45) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 1) return null;
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    return (
+      <div
+        key={key}
+        style={{
+          position: 'absolute',
+          left: start.x,
+          top: start.y,
+          width: distance,
+          height: thickness,
+          background: `rgba(255,80,80,${opacity})`,
+          transformOrigin: 'left center',
+          transform: `rotate(${angle}deg)`
+        }}
+      />
+    );
+  };
+
+  const renderNow = Date.now();
+  const circleGuideElements = enemyProjectiles.flatMap((p) => {
+    if (p.attackPattern !== 'CIRCLE') return [];
+    const centerDefined = p.orbitCenterX !== undefined && p.orbitCenterY !== undefined && p.orbitRadius !== undefined && p.orbitAngle !== undefined;
+    const results: React.ReactNode[] = [];
+    if (centerDefined && (p.circleMode === 'GUIDE_ORBIT' || p.circleMode === 'ORBIT')) {
+      const centerX = p.orbitCenterX!;
+      const centerY = p.orbitCenterY!;
+      const radius = p.orbitRadius!;
+      const direction = p.orbitDirection || 1;
+      const totalSegments = Math.max(12, CIRCLE_ORBIT_LOOPS * CIRCLE_GUIDE_SEGMENTS);
+      const progress = p.circleMode === 'ORBIT'
+        ? Math.max(0, Math.min(1, (p.orbitAccumulatedAngle || 0) / (Math.PI * 2 * CIRCLE_ORBIT_LOOPS)))
+        : 0;
+      const baseOpacity = p.circleMode === 'GUIDE_ORBIT' ? 0.45 : 0.45 * Math.max(0, 1 - progress);
+      let prevAngle = p.orbitAngle!;
+      let prevPoint = { x: centerX + Math.cos(prevAngle) * radius, y: centerY + Math.sin(prevAngle) * radius };
+      for (let i = 1; i <= totalSegments; i++) {
+        const angle = p.orbitAngle! + direction * (i * (2 * Math.PI / CIRCLE_GUIDE_SEGMENTS));
+        const nextPoint = { x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius };
+        const seg = renderGuideLine(prevPoint, nextPoint, `circle-guide-${p.id}-${i}`, 2, baseOpacity);
+        if (seg) results.push(seg);
+        prevPoint = nextPoint;
+      }
+    }
+    if (p.circleMode === 'GUIDE_DROP' || (p.circleMode === 'DROP' && p.circleGuideUntil !== undefined)) {
+      const start = { x: p.x, y: p.y };
+      const end = { x: p.x, y: GAME_HEIGHT };
+      const fadeBase = p.circleGuideUntil !== undefined
+        ? Math.max(0, Math.min(1, (p.circleGuideUntil - renderNow) / CIRCLE_GUIDE_DURATION))
+        : 1;
+      const opacity = (p.circleMode === 'GUIDE_DROP' ? 0.55 : 0.45) * fadeBase;
+      if (opacity > 0.01) {
+        const seg = renderGuideLine(start, end, `circle-drop-guide-${p.id}`, 3, opacity);
+        if (seg) results.push(seg);
+      }
+    }
+    return results;
+  });
+
   const getStockedItemIcon = (itemType: SpecialWeapon) => {
     const props = { className: "w-10 h-10" };
     switch (itemType) {
@@ -1917,6 +2334,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       {enemies.map(e => <EnemyComponent key={e.id} enemy={e} isLastStand={isLastStand}/>)}
       {projectiles.map(p => <ProjectileComponent key={p.id} p={p} />)}
       {enemyProjectiles.map(p => <EnemyProjectileComponent key={p.id} p={p} />)}
+      {circleGuideElements}
       {items.map(i => <ItemComponent key={i.id} item={i} />)}
       {mines.map(m => <MineComponent key={m.id} mine={m} />)}
       {explosions.map(ex => <ExplosionComponent key={ex.id} explosion={ex} />)}

@@ -28,6 +28,9 @@ const InfoPanel = () => (
                 <li className="flex items-center"><span className="font-orbitron font-bold text-3xl mr-4 text-yellow-400 w-8 text-center flex-shrink-0">敵</span><p><span className="font-bold">Straight Down:</span> Fires projectiles straight down.</p></li>
                 <li className="flex items-center"><span className="font-orbitron font-bold text-3xl mr-4 text-orange-400 w-8 text-center flex-shrink-0">敵</span><p><span className="font-bold">Delayed Homing:</span> Projectiles pause, then rush towards the player.</p></li>
                 <li className="flex items-center"><span className="font-orbitron font-bold text-3xl mr-4 text-teal-400 w-8 text-center flex-shrink-0">敵</span><p><span className="font-bold">Spiral:</span> Fires projectiles in a spreading spiral pattern.</p></li>
+                <li className="flex items-center"><span className="font-orbitron font-bold text-3xl mr-4 text-indigo-400 w-8 text-center flex-shrink-0">敵</span><p><span className="font-bold">Beat:</span> With every lyric drop, fires two shots toward the player’s flanks. Longer gaps mean faster bullets (up to 3× speed).</p></li>
+                <li className="flex items-center"><span className="font-orbitron font-bold text-3xl mr-4 text-amber-400 w-8 text-center flex-shrink-0">敵</span><p><span className="font-bold">Side:</span> Launches paired shots from its left and right sides that fan outward.</p></li>
+                <li className="flex items-center"><span className="font-orbitron font-bold text-3xl mr-4 text-rose-400 w-8 text-center flex-shrink-0">敵</span><p><span className="font-bold">Deceleration:</span> Sends a blisteringly fast homing shot that slows to a crawl near the player.</p></li>
             </ul>
         </div>
         <div className="md:col-span-2 pt-4 border-t-2 border-slate-700">
@@ -37,6 +40,7 @@ const InfoPanel = () => (
                 <li className="flex items-center"><span className="font-orbitron font-bold text-4xl mr-4 text-amber-500 w-10 text-center flex-shrink-0">敵</span><p><span className="font-bold">Gatling Shooter:</span> Fires a quick burst of 5 projectiles straight down.</p></li>
                 <li className="flex items-center"><span className="font-orbitron font-bold text-4xl mr-4 text-lime-500 w-10 text-center flex-shrink-0">敵</span><p><span className="font-bold">Landmine Shooter:</span> Deploys stationary mines. Triggering a mine with your shot causes it to explode into a 5-way burst.</p></li>
                 <li className="flex items-center"><span className="font-orbitron font-bold text-4xl mr-4 text-cyan-300 w-10 text-center flex-shrink-0">敵</span><p><span className="font-bold">Laser Shooter:</span> Aims with a guide line, then fires a devastating laser beam.</p></li>
+                <li className="flex items-center"><span className="font-orbitron font-bold text-4xl mr-4 text-sky-400 w-10 text-center flex-shrink-0">敵</span><p><span className="font-bold">Circle Shooter:</span> Fires a guided orb that circles the player once before plunging straight downward.</p></li>
             </ul>
         </div>
         <div className="md:col-span-2 pt-4 border-t-2 border-slate-700">

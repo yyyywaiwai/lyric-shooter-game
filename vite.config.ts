@@ -8,7 +8,8 @@ export default defineConfig(({ mode }) => {
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.LS_SERVER_URL_DEFAULT': JSON.stringify(env.LS_SERVER_URL_DEFAULT || '')
+        'process.env.LS_SERVER_URL_DEFAULT': JSON.stringify(env.LS_SERVER_URL_DEFAULT || ''),
+        'process.env.LS_OPERATION_MODE': JSON.stringify(env.LS_OPERATION_MODE || 'split')
       },
       resolve: {
         alias: {

@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "build:integrated": "node scripts/buildIntegrated.js",
+    "start:integrated": "node server/startIntegrated.js"
   },
   "dependencies": {
     "jsmediatags": "^3.9.7",

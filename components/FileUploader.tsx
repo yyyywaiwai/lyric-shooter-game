@@ -5,6 +5,8 @@ import { UploadIcon } from './icons';
 import SearchPanel from './SearchPanel';
 import ServerConfig from './ServerConfig';
 
+const SHOW_SERVER_CONFIG = process.env.LS_OPERATION_MODE !== 'integrated';
+
 // Load jsmediatags from CDN
 const loadJsMediaTags = () => {
   return new Promise((resolve) => {
@@ -144,7 +146,7 @@ export default function FileUploader({ onFilesLoaded }: FileUploaderProps): Reac
         <p className="mt-2 text-sky-300">Search Apple Music or upload files.</p>
       </div>
 
-      <ServerConfig />
+      {SHOW_SERVER_CONFIG && <ServerConfig />}
 
       <div className="grid grid-cols-2 gap-2">
         <button

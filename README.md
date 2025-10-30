@@ -73,8 +73,22 @@ npm run server
 npm run dev
 ```
 
+### Integrated self-host mode
+
+If you are running the frontend and API on the same machine, you can serve both from the Node server:
+
+```bash
+# Build the frontend with the integrated mode flag (run again after UI changes)
+npm run build:integrated
+
+# Start the combined server + frontend (defaults to http://127.0.0.1:3001)
+npm run start:integrated
+```
+
+The app is now served directly from the API server, the UI always talks to `/api`, and the server address field is hidden. Set `PORT` / `HOST` before `npm run start:integrated` to expose a different address.
+
 Usage:
-- On the home screen, set your API Server Address (stored in a cookie). If you host the server on another machine, enter its origin, e.g. `https://your-host.example.com:3001`. The app assumes the API lives under `/api`.
+- (Split mode only) On the home screen, set your API Server Address (stored in a cookie). If you host the server on another machine, enter its origin, e.g. `https://your-host.example.com:3001`. The app assumes the API lives under `/api`.
 - Choose “Search Apple Music”, enter a query, then click “Play” on a result.
 - The app calls the remote server’s `/api/download` which runs `gamdl` under the hood, returns audio+lyrics, and jumps straight to the READY screen.
 
@@ -85,6 +99,7 @@ For direct API use:
 
 Notes:
 - The API is separate from the GitHub Pages frontend; host it wherever you like.
+- Integrated mode (`npm run start:integrated`) serves the built frontend from the same origin as the API and hides the server address UI.
 - The server sends audio as a data URL and LRC as text; nothing is persisted.
 - If `gamdl` fails (e.g., cookies missing/expired or region mismatch), you’ll see an error banner in the UI.
 - When opening the frontend over HTTPS (e.g., GitHub Pages), the API server must also be HTTPS to avoid mixed‑content blocking. Ensure CORS allows your site.

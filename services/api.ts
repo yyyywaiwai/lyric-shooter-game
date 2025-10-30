@@ -1,5 +1,7 @@
 import { getCookie } from '@/services/cookies';
 
+const INTEGRATED_MODE = (process.env.LS_OPERATION_MODE === 'integrated');
+
 export interface ITunesTrack {
   trackId: number;
   trackName: string;
@@ -45,6 +47,9 @@ function normalizeBase(u: string): string | null {
 }
 
 function getApiBase(): { base: string; usingCookie: boolean; usingEnv: boolean } {
+  if (INTEGRATED_MODE) {
+    return { base: '/api', usingCookie: false, usingEnv: false };
+  }
   const raw = (typeof document !== 'undefined') ? getCookie('LS_SERVER_URL') : null;
   const fromCookie = normalizeBase(raw || '');
   if (fromCookie) return { base: fromCookie, usingCookie: true, usingEnv: false };

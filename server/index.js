@@ -18,6 +18,21 @@ const HOST = process.env.HOST || '127.0.0.1';
 
 const ROOT = process.cwd();
 const TMP_ROOT = path.join(ROOT, 'server', 'tmp');
+const MODE = process.env.LS_OPERATION_MODE || '';
+const SERVE_FRONTEND = process.env.LS_SERVE_FRONTEND === '1' || MODE === 'integrated' || process.argv.includes('--serve-frontend');
+const DIST_ROOT = process.env.LS_DIST_DIR ? path.resolve(ROOT, process.env.LS_DIST_DIR) : path.join(ROOT, 'dist');
+const DIST_INDEX = path.join(DIST_ROOT, 'index.html');
+const DIST_EXISTS = SERVE_FRONTEND && fs.existsSync(DIST_ROOT);
+
+if (SERVE_FRONTEND) {
+  if (DIST_EXISTS) {
+    // eslint-disable-next-line no-console
+    console.log(`[Integrated] Serving static frontend from ${DIST_ROOT}`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(`[Integrated] Static frontend directory not found at ${DIST_ROOT}. Build the frontend before starting integrated mode.`);
+  }
+}
 
 async function ensureTmpRoot() {
   await fsp.mkdir(TMP_ROOT, { recursive: true });
@@ -163,6 +178,108 @@ function detectMimeFromExt(filePath) {
   return 'application/octet-stream';
 }
 
+const STATIC_MIME_MAP = new Map([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.js', 'application/javascript; charset=utf-8'],
+  ['.css', 'text/css; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.ico', 'image/x-icon'],
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.webp', 'image/webp'],
+  ['.txt', 'text/plain; charset=utf-8'],
+  ['.woff2', 'font/woff2'],
+  ['.mp3', 'audio/mpeg'],
+]);
+
+function getStaticMime(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return STATIC_MIME_MAP.get(ext) || 'application/octet-stream';
+}
+
+async function serveFrontend(req, res, pathname) {
+  if (!SERVE_FRONTEND) return false;
+  if (pathname.startsWith('/api')) return false;
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  if (!DIST_EXISTS) {
+    sendText(res, 500, 'Frontend build not found. Run the build step before starting in integrated mode.');
+    return true;
+  }
+
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(pathname.split('?')[0]);
+  } catch {
+    sendText(res, 400, 'Bad request');
+    return true;
+  }
+
+  if (decodedPath === '/' || decodedPath === '') {
+    decodedPath = '/index.html';
+  }
+
+  const trimmed = decodedPath.replace(/^\/+/, '');
+  let absolutePath = path.resolve(DIST_ROOT, trimmed);
+  if (!absolutePath.startsWith(DIST_ROOT)) {
+    sendText(res, 403, 'Forbidden');
+    return true;
+  }
+
+  let stat;
+  try {
+    stat = await fsp.stat(absolutePath);
+    if (stat.isDirectory()) {
+      absolutePath = path.join(absolutePath, 'index.html');
+      stat = await fsp.stat(absolutePath);
+    }
+  } catch {
+    const hasExtension = Boolean(path.extname(trimmed));
+    if (hasExtension) {
+      return false;
+    }
+    absolutePath = DIST_INDEX;
+    try {
+      stat = await fsp.stat(absolutePath);
+    } catch {
+      sendText(res, 404, 'Not found');
+      return true;
+    }
+  }
+
+  const contentType = getStaticMime(absolutePath);
+  const cacheControl = path.extname(absolutePath).toLowerCase() === '.html'
+    ? 'no-cache'
+    : 'public, max-age=31536000, immutable';
+
+  if (req.method === 'HEAD') {
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Cache-Control': cacheControl,
+    });
+    res.end();
+    return true;
+  }
+
+  const stream = fs.createReadStream(absolutePath);
+  stream.on('error', () => {
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    }
+    res.end('Failed to read static file');
+  });
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Length': stat.size,
+    'Cache-Control': cacheControl,
+  });
+  stream.pipe(res);
+  return true;
+}
+
 async function handleDownload(req, res) {
   const body = await readJSONBody(req).catch((e) => ({ __error: e }));
   if (body.__error) {
@@ -264,6 +381,10 @@ const server = createServer(async (req, res) => {
     } catch (e) {
       return sendJSON(res, 500, { error: 'Unexpected server error', message: String(e) });
     }
+  }
+
+  if (await serveFrontend(req, res, pathname)) {
+    return;
   }
 
   sendJSON(res, 404, { error: 'Not found' });

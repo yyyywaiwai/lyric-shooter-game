@@ -31,6 +31,9 @@ const detectDesktop = (): boolean => {
   return !(isNonDesktopByUa || isTouchMac);
 };
 
+const MIN_VIEWPORT_WIDTH = 1024;
+const MIN_VIEWPORT_HEIGHT = 720;
+
 const InfoPanel = () => (
     <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 max-w-4xl mx-auto p-4 bg-slate-800 bg-opacity-70 rounded-lg text-left">
         <div>
@@ -220,6 +223,10 @@ const ItemSelection = ({ onSelect }: { onSelect: (item: ItemType) => void }) => 
 
 export default function App(): React.ReactNode {
   const [isDesktop, setIsDesktop] = useState<boolean>(() => detectDesktop());
+  const [isWindowLargeEnough, setIsWindowLargeEnough] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth >= MIN_VIEWPORT_WIDTH && window.innerHeight >= MIN_VIEWPORT_HEIGHT;
+  });
   const [gameStatus, setGameStatus] = useState<GameStatus>('loading');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
@@ -237,10 +244,24 @@ export default function App(): React.ReactNode {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const handleDeviceChange = () => setIsDesktop(detectDesktop());
-    handleDeviceChange();
-    window.addEventListener('resize', handleDeviceChange);
-    return () => window.removeEventListener('resize', handleDeviceChange);
+    let rafId = 0;
+    const updateLayoutState = () => {
+      rafId = 0;
+      setIsDesktop(detectDesktop());
+      setIsWindowLargeEnough(window.innerWidth >= MIN_VIEWPORT_WIDTH && window.innerHeight >= MIN_VIEWPORT_HEIGHT);
+    };
+    const handleResize = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(updateLayoutState);
+    };
+    updateLayoutState();
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -391,6 +412,20 @@ export default function App(): React.ReactNode {
             This game relies on keyboard controls and mouse precision. Please come back on a desktop computer to play.
           </p>
           <p className="text-slate-400 text-sm">Touch devices are not supported at this time.</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!isWindowLargeEnough) {
+    return (
+      <main className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center text-white bg-black bg-opacity-70 p-8 rounded-2xl space-y-4">
+          <h1 className="text-3xl font-orbitron text-amber-300">Make The Window Larger</h1>
+          <p className="text-slate-200 leading-relaxed">
+            This game needs at least {MIN_VIEWPORT_WIDTH} × {MIN_VIEWPORT_HEIGHT} pixels of space. Maximize or resize your browser window and try again.
+          </p>
+          <p className="text-slate-400 text-sm">Tip: Fullscreen (F11) usually provides enough room.</p>
         </div>
       </main>
     );

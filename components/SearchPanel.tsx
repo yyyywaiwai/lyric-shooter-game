@@ -59,6 +59,9 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
     setError(null);
     try {
       const { audioDataUrl, lrcText } = await downloadByAppleMusicUrl(t.trackViewUrl);
+      if (!lrcText || !lrcText.trim()) {
+        throw new Error('No synced lyrics were returned for this track.');
+      }
       const lyrics = parseLRC(lrcText);
       if (!lyrics.length) throw new Error('No synced lyrics found for this track.');
       // Prefer 600px artwork if available

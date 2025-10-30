@@ -330,9 +330,13 @@ async function handleDownload(req, res) {
     try {
       const audioPath = await findFirstByExt(outDir, ['.m4a', '.mp4', '.m4v']);
       const lrcPath = await findFirstByExt(outDir, ['.lrc']);
-      if (!audioPath || !lrcPath) {
+      if (!lrcPath) {
         try { await fsp.rm(outDir, { recursive: true, force: true }); } catch {}
-        return sendJSON(res, 500, { error: 'Downloaded files not found', audioPath, lrcPath, logs });
+        return sendJSON(res, 404, { error: 'Synced lyrics not available for this track (no LRC file was downloaded).', logs });
+      }
+      if (!audioPath) {
+        try { await fsp.rm(outDir, { recursive: true, force: true }); } catch {}
+        return sendJSON(res, 500, { error: 'Audio file was not downloaded', logs });
       }
       const audioBuf = await fsp.readFile(audioPath);
       const lrcText = await fsp.readFile(lrcPath, 'utf8');

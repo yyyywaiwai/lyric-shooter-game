@@ -84,7 +84,18 @@ export async function downloadByAppleMusicUrl(url: string): Promise<{ audioDataU
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    throw new Error(`Download failed: ${res.status} ${txt && '- ' + txt.slice(0, 200)}`);
+    let parsedError: string | null = null;
+    if (txt) {
+      try {
+        const parsed = JSON.parse(txt);
+        if (parsed && typeof parsed.error === 'string') {
+          parsedError = parsed.error;
+        }
+      } catch {
+        // ignore JSON parse errors, fall back to plain text
+      }
+    }
+    throw new Error(parsedError || `Download failed: ${res.status}${txt ? ` - ${txt.slice(0, 200)}` : ''}`);
   }
   return readJsonStrict(res);
 }

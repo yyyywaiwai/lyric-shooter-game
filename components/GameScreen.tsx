@@ -166,7 +166,8 @@ const CIRCLE_ORBIT_LOOPS = 1;
 const CIRCLE_ORBIT_ANGULAR_SPEED = Math.PI; // radians per second
 const CIRCLE_MIN_ORBIT_RADIUS = 40;
 const CIRCLE_GUIDE_DURATION = 400; // ms
-const CIRCLE_GUIDE_SEGMENTS = 48;
+const CIRCLE_GUIDE_SEGMENTS = 24;
+const NEAREST_SEARCH_RADII = [24, 64, 128, 256, 512];
 
 interface GameScreenProps {
   audioUrl: string;
@@ -535,6 +536,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     enemies: [] as Enemy[],
     enemyProjectiles: [] as EnemyProjectile[],
     mines: [] as Mine[],
+    nearestEnemies: [] as Enemy[],
+    nearestSearchRect: { x: 0, y: 0, width: 0, height: 0 },
   });
   
   const totalChars = useMemo(() => lyrics.reduce((acc, line) => acc + line.text.replace(/\s/g, '').length, 0), [lyrics]);
@@ -1845,9 +1848,42 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
     // Helper: find nearest enemy to a point, optionally excluding one id
     const findNearestEnemy = (x: number, y: number, excludeId?: number) => {
+        const buffers = collisionBuffersRef.current;
+        const searchRect = buffers.nearestSearchRect;
+        const nearbyEnemies = buffers.nearestEnemies;
         let best: Enemy | null = null;
         let bestDist = Infinity;
-        for (const e of state.enemies) {
+
+        for (let rIndex = 0; rIndex < NEAREST_SEARCH_RADII.length; rIndex++) {
+            const radius = NEAREST_SEARCH_RADII[rIndex];
+            searchRect.x = x - radius;
+            searchRect.y = y - radius;
+            searchRect.width = radius * 2;
+            searchRect.height = radius * 2;
+            const candidates = spatialGrid.current.queryNearby(searchRect, nearbyEnemies);
+            for (let i = 0; i < candidates.length; i++) {
+                const e = candidates[i] as Enemy;
+                if (!e || (excludeId && e.id === excludeId)) continue;
+                const cx = e.x + e.width / 2;
+                const cy = e.y + e.height / 2;
+                const dx = cx - x;
+                const dy = cy - y;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < bestDist) {
+                    bestDist = d2;
+                    best = e;
+                }
+            }
+            if (best) {
+                break;
+            }
+        }
+
+        if (best) return best;
+
+        // Fallback: scan all enemies if nothing was found nearby
+        for (let i = 0; i < state.enemies.length; i++) {
+            const e = state.enemies[i];
             if (excludeId && e.id === excludeId) continue;
             const cx = e.x + e.width / 2;
             const cy = e.y + e.height / 2;
@@ -2384,10 +2420,11 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   };
 
   const renderNow = Date.now();
-  const circleGuideElements = enemyProjectiles.flatMap((p) => {
-    if (p.attackPattern !== 'CIRCLE') return [];
+  const circleGuideElements: React.ReactNode[] = [];
+  for (let i = 0; i < enemyProjectiles.length; i++) {
+    const p = enemyProjectiles[i];
+    if (p.attackPattern !== 'CIRCLE') continue;
     const centerDefined = p.orbitCenterX !== undefined && p.orbitCenterY !== undefined && p.orbitRadius !== undefined && p.orbitAngle !== undefined;
-    const results: React.ReactNode[] = [];
     if (centerDefined && (p.circleMode === 'GUIDE_ORBIT' || p.circleMode === 'ORBIT')) {
       const centerX = p.orbitCenterX!;
       const centerY = p.orbitCenterY!;
@@ -2399,29 +2436,30 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         : 0;
       const baseOpacity = p.circleMode === 'GUIDE_ORBIT' ? 0.45 : 0.45 * Math.max(0, 1 - progress);
       let prevAngle = p.orbitAngle!;
-      let prevPoint = { x: centerX + Math.cos(prevAngle) * radius, y: centerY + Math.sin(prevAngle) * radius };
-      for (let i = 1; i <= totalSegments; i++) {
-        const angle = p.orbitAngle! + direction * (i * (2 * Math.PI / CIRCLE_GUIDE_SEGMENTS));
-        const nextPoint = { x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius };
-        const seg = renderGuideLine(prevPoint, nextPoint, `circle-guide-${p.id}-${i}`, 2, baseOpacity);
-        if (seg) results.push(seg);
-        prevPoint = nextPoint;
+      let prevX = centerX + Math.cos(prevAngle) * radius;
+      let prevY = centerY + Math.sin(prevAngle) * radius;
+      const angleStep = direction * ((Math.PI * 2 * CIRCLE_ORBIT_LOOPS) / totalSegments);
+      for (let segIndex = 1; segIndex <= totalSegments; segIndex++) {
+        const angle = p.orbitAngle! + angleStep * segIndex;
+        const nextX = centerX + Math.cos(angle) * radius;
+        const nextY = centerY + Math.sin(angle) * radius;
+        const seg = renderGuideLine({ x: prevX, y: prevY }, { x: nextX, y: nextY }, `circle-guide-${p.id}-${segIndex}`, 2, baseOpacity);
+        if (seg) circleGuideElements.push(seg);
+        prevX = nextX;
+        prevY = nextY;
       }
     }
     if (p.circleMode === 'GUIDE_DROP' || (p.circleMode === 'DROP' && p.circleGuideUntil !== undefined)) {
-      const start = { x: p.x, y: p.y };
-      const end = { x: p.x, y: GAME_HEIGHT };
       const fadeBase = p.circleGuideUntil !== undefined
         ? Math.max(0, Math.min(1, (p.circleGuideUntil - renderNow) / CIRCLE_GUIDE_DURATION))
         : 1;
       const opacity = (p.circleMode === 'GUIDE_DROP' ? 0.55 : 0.45) * fadeBase;
       if (opacity > 0.01) {
-        const seg = renderGuideLine(start, end, `circle-drop-guide-${p.id}`, 3, opacity);
-        if (seg) results.push(seg);
+        const seg = renderGuideLine({ x: p.x, y: p.y }, { x: p.x, y: GAME_HEIGHT }, `circle-drop-guide-${p.id}`, 3, opacity);
+        if (seg) circleGuideElements.push(seg);
       }
     }
-    return results;
-  });
+  }
 
   const getStockedItemIcon = (itemType: SpecialWeapon) => {
     const props = { className: "w-10 h-10" };

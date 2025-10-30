@@ -153,6 +153,7 @@ const MINE_HEIGHT = 22;
 const MINE_LIFETIME = 9000; // 9 seconds
 const FLOATING_TEXT_DURATION = 1000;
 const RICOCHET_SPEED_FACTOR = 0.3; // 70% slower after each bounce (disabled during Last Stand)
+const MIN_RICOCHET_SPEED = 240;
 const RICOCHET_DIAMETER = 10; // visual/collision size for bounced bullets
 const PHASE_SHIELD_DURATION = 3000; // ms
 const BEAT_SPEED_MIN_INTERVAL = 2000;
@@ -167,7 +168,11 @@ const CIRCLE_ORBIT_ANGULAR_SPEED = Math.PI; // radians per second
 const CIRCLE_MIN_ORBIT_RADIUS = 40;
 const CIRCLE_GUIDE_DURATION = 400; // ms
 const CIRCLE_GUIDE_SEGMENTS = 24;
-const NEAREST_SEARCH_RADII = [24, 64, 128, 256, 512];
+const MAX_SPAWNS_PER_FRAME = 6;
+const MOVEMENT_PATTERNS: MovementPattern[] = ['STRAIGHT_DOWN', 'SINE_WAVE', 'ZIG_ZAG', 'DRIFTING', 'ACCELERATING'];
+const NORMAL_SHOOTER_PATTERNS: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL', 'BEAT', 'SIDE', 'DECELERATE'];
+const LEGACY_SHOOTER_PATTERNS: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL'];
+const ELITE_TYPES: EliteShooterType[] = ['MAGIC', 'GATLING', 'LANDMINE', 'LASER', 'CIRCLE'];
 
 interface GameScreenProps {
   audioUrl: string;
@@ -518,6 +523,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       backspacePressStart: 0,
       backspacePressProgress: 0,
       fps: 0,
+      pendingSpawns: [] as { time: number; char: string; progress: number }[],
+      pendingSpawnCursor: 0,
   });
 
   const [, forceUpdate] = useState(0);
@@ -536,8 +543,6 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     enemies: [] as Enemy[],
     enemyProjectiles: [] as EnemyProjectile[],
     mines: [] as Mine[],
-    nearestEnemies: [] as Enemy[],
-    nearestSearchRect: { x: 0, y: 0, width: 0, height: 0 },
   });
   
   const totalChars = useMemo(() => lyrics.reduce((acc, line) => acc + line.text.replace(/\s/g, '').length, 0), [lyrics]);
@@ -798,6 +803,88 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     const state = gameStateRef.current;
     const isLastStand = state.lives === 1;
 
+    const spawnEnemyFromChar = (char: string, progress: number) => {
+      const movementPattern = MOVEMENT_PATTERNS[Math.floor(Math.random() * MOVEMENT_PATTERNS.length)];
+
+      let shooterChance = state.baseShooterChance;
+      if (progress > 0.75) shooterChance += 0.15;
+      else if (progress > 0.50) shooterChance += 0.10;
+      else if (progress > 0.25) shooterChance += 0.05;
+
+      let attackPattern: ShooterAttackPattern | undefined;
+      const isShooter = Math.random() < shooterChance;
+      if (isShooter) {
+        attackPattern = NORMAL_SHOOTER_PATTERNS[Math.floor(Math.random() * NORMAL_SHOOTER_PATTERNS.length)];
+      }
+
+      let isElite = false;
+      let eliteType: EliteShooterType | undefined;
+      const eliteShooterProgressThreshold = superHardMode ? 0 : 0.5;
+      const eliteShooterChance = superHardMode ? 0.20 : 0.15;
+
+      if (isShooter && progress >= eliteShooterProgressThreshold && Math.random() < eliteShooterChance) {
+        isElite = true;
+        eliteType = ELITE_TYPES[Math.floor(Math.random() * ELITE_TYPES.length)];
+        attackPattern = LEGACY_SHOOTER_PATTERNS[Math.floor(Math.random() * LEGACY_SHOOTER_PATTERNS.length)];
+        if (eliteType === 'CIRCLE') {
+          attackPattern = 'CIRCLE';
+        }
+      }
+
+      const enemy: Enemy = {
+        id: generateId(),
+        char,
+        x: Math.random() * (GAME_WIDTH - ENEMY_WIDTH),
+        y: -ENEMY_HEIGHT,
+        width: ENEMY_WIDTH,
+        height: ENEMY_HEIGHT,
+        speedY: ENEMY_SPEED_PER_SECOND,
+        movementPattern,
+        isShooter,
+        attackPattern: isShooter ? attackPattern : undefined,
+        isElite,
+        eliteType,
+        hp: isElite ? 3 : 1,
+        isFlashing: false,
+        isBig: superHardMode && state.isMidGameBuffActive && !isElite && isShooter,
+      };
+
+      if (enemy.isBig) enemy.hp = 3;
+
+      switch (movementPattern) {
+        case 'SINE_WAVE':
+          enemy.initialX = enemy.x;
+          enemy.amplitude = 50 + Math.random() * 100;
+          enemy.frequency = (0.005 + Math.random() * 0.005) * (Math.random() > 0.5 ? 1 : -1);
+          break;
+        case 'ZIG_ZAG': {
+          const lateralSpeed = (60 + Math.random() * 60) * (Math.random() > 0.5 ? 1 : -1);
+          enemy.speedX = lateralSpeed;
+          break;
+        }
+        case 'DRIFTING':
+          enemy.speedX = (30 + Math.random() * 30) * (Math.random() > 0.5 ? 1 : -1);
+          break;
+        case 'ACCELERATING':
+          enemy.accelerationY = ENEMY_ACCELERATION_PER_SECOND_SQUARED;
+          break;
+      }
+
+      if (enemy.isElite) {
+        enemy.width *= 1.5;
+        enemy.height *= 1.5;
+        if (enemy.eliteType === 'LASER') {
+          enemy.laserState = 'IDLE';
+        }
+      }
+      if (enemy.isBig) {
+        enemy.width *= 1.3;
+        enemy.height *= 1.3;
+      }
+
+      state.enemies.push(enemy);
+    };
+
     if (state.isGameEnding) return;
 
     // --- FPS Tracking ---
@@ -851,6 +938,27 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         }
     } else if (state.backspacePressStart === 0 && state.backspacePressProgress > 0) {
         state.backspacePressProgress = 0;
+    }
+
+    // --- Process Pending Enemy Spawns ---
+    if (state.pendingSpawnCursor < state.pendingSpawns.length) {
+      const nowTs = Date.now();
+      let processed = 0;
+      while (
+        state.pendingSpawnCursor < state.pendingSpawns.length &&
+        state.pendingSpawns[state.pendingSpawnCursor].time <= nowTs &&
+        processed < MAX_SPAWNS_PER_FRAME
+      ) {
+        const task = state.pendingSpawns[state.pendingSpawnCursor];
+        spawnEnemyFromChar(task.char, task.progress);
+        state.pendingSpawnCursor++;
+        processed++;
+      }
+
+      if (state.pendingSpawnCursor > 0 && (state.pendingSpawnCursor > 32 || state.pendingSpawnCursor > state.pendingSpawns.length / 2)) {
+        state.pendingSpawns.splice(0, state.pendingSpawnCursor);
+        state.pendingSpawnCursor = 0;
+      }
     }
 
     // --- Update Enemy Spawn Rate (every 1 second) ---
@@ -1625,116 +1733,19 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
       if (!state.showSkip && state.currentLyricIndex < lyrics.length && audio.currentTime >= lyrics[state.currentLyricIndex].time) {
         const line = lyrics[state.currentLyricIndex].text.replace(/\s/g, '');
-        let charIndex = 0;
         const spawnInterval = 100 / Math.max(1, line.length);
         fireBeatShooters(currentTime);
-        const spawnChar = () => {
-          if (charIndex < line.length) {
-            const char = line[charIndex];
-            
-            const movementPatterns: MovementPattern[] = ['STRAIGHT_DOWN', 'SINE_WAVE', 'ZIG_ZAG', 'DRIFTING', 'ACCELERATING'];
-            const movementPattern = movementPatterns[Math.floor(Math.random() * movementPatterns.length)];
-            
-            const normalShooterPatterns: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL', 'BEAT', 'SIDE', 'DECELERATE'];
-            const legacyShooterPatterns: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL'];
-            let attackPattern: ShooterAttackPattern | undefined = undefined;
 
-            let shooterChance = state.baseShooterChance;
-
-            // Song progress difficulty scaling
-            const progress = state.currentLyricIndex / totalLyricLines;
-            if (progress > 0.75) shooterChance += 0.15;
-            else if (progress > 0.50) shooterChance += 0.10;
-            else if (progress > 0.25) shooterChance += 0.05;
-
-            const isShooter = Math.random() < shooterChance;
-            if (isShooter) {
-                attackPattern = normalShooterPatterns[Math.floor(Math.random() * normalShooterPatterns.length)];
-            }
-
-            let isElite = false;
-            let eliteType: EliteShooterType | undefined = undefined;
-
-            const eliteShooterProgressThreshold = superHardMode ? 0 : 0.5;
-            const eliteShooterChance = superHardMode ? 0.20 : 0.15;
-
-            if (isShooter && progress >= eliteShooterProgressThreshold && Math.random() < eliteShooterChance) {
-                isElite = true;
-                const eliteTypes: EliteShooterType[] = ['MAGIC', 'GATLING', 'LANDMINE', 'LASER', 'CIRCLE'];
-                eliteType = eliteTypes[Math.floor(Math.random() * eliteTypes.length)];
-                attackPattern = legacyShooterPatterns[Math.floor(Math.random() * legacyShooterPatterns.length)];
-                if (eliteType === 'CIRCLE') {
-                    attackPattern = 'CIRCLE';
-                }
-            }
-
-            const enemy: Enemy = {
-              id: generateId(),
-              char,
-              x: Math.random() * (GAME_WIDTH - ENEMY_WIDTH),
-              y: -ENEMY_HEIGHT,
-              width: ENEMY_WIDTH,
-              height: ENEMY_HEIGHT,
-              speedY: ENEMY_SPEED_PER_SECOND,
-              movementPattern,
-              isShooter,
-              attackPattern: isShooter ? attackPattern : undefined,
-              // Elite props
-              isElite,
-              eliteType,
-              hp: isElite ? 3 : 1,
-              isFlashing: false,
-              // Super Hard Mode Props
-              isBig: superHardMode && state.isMidGameBuffActive && !isElite && isShooter,
-            };
-
-            if(enemy.isBig) enemy.hp = 3;
-
-            switch(movementPattern) {
-                case 'SINE_WAVE':
-                    enemy.initialX = enemy.x;
-                    enemy.amplitude = 50 + Math.random() * 100;
-                    enemy.frequency = (0.005 + Math.random() * 0.005) * (Math.random() > 0.5 ? 1 : -1);
-                    break;
-                case 'ZIG_ZAG':
-                    enemy.speedX = (60 + Math.random() * 60) * (Math.random() > 0.5 ? 1 : -1);
-                    break;
-                case 'DRIFTING':
-                    enemy.speedX = (30 + Math.random() * 30) * (Math.random() > 0.5 ? 1 : -1);
-                    break;
-                case 'ACCELERATING':
-                    enemy.accelerationY = ENEMY_ACCELERATION_PER_SECOND_SQUARED;
-                    break;
-            }
-
-            if(enemy.isElite) {
-                enemy.width *= 1.5;
-                enemy.height *= 1.5;
-                if(enemy.eliteType === 'LASER') {
-                    enemy.laserState = 'IDLE';
-                }
-            }
-            if(enemy.isBig) {
-                enemy.width *= 1.3;
-                enemy.height *= 1.3;
-            }
-
-            state.enemies.push(enemy);
-            charIndex++;
-            setTimeout(spawnChar, spawnInterval);
-          }
-        };
-        // Track enemy spawn rate
-        const enemyCount = line.length;
-        state.totalEnemiesSpawned += enemyCount;
-        
-        // Initialize game start time
-        const now = Date.now();
-        if (state.gameStartTime === 0) {
-          state.gameStartTime = now;
+        const progress = totalLyricLines > 0 ? (state.currentLyricIndex / totalLyricLines) : 0;
+        const startTime = Date.now();
+        for (let idx = 0; idx < line.length; idx++) {
+          state.pendingSpawns.push({ time: startTime + idx * spawnInterval, char: line[idx], progress });
         }
-        
-        spawnChar();
+
+        state.totalEnemiesSpawned += line.length;
+        if (state.gameStartTime === 0) {
+          state.gameStartTime = Date.now();
+        }
         state.currentLyricIndex++;
       }
     }
@@ -1848,43 +1859,11 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
     // Helper: find nearest enemy to a point, optionally excluding one id
     const findNearestEnemy = (x: number, y: number, excludeId?: number) => {
-        const buffers = collisionBuffersRef.current;
-        const searchRect = buffers.nearestSearchRect;
-        const nearbyEnemies = buffers.nearestEnemies;
         let best: Enemy | null = null;
         let bestDist = Infinity;
-
-        for (let rIndex = 0; rIndex < NEAREST_SEARCH_RADII.length; rIndex++) {
-            const radius = NEAREST_SEARCH_RADII[rIndex];
-            searchRect.x = x - radius;
-            searchRect.y = y - radius;
-            searchRect.width = radius * 2;
-            searchRect.height = radius * 2;
-            const candidates = spatialGrid.current.queryNearby(searchRect, nearbyEnemies);
-            for (let i = 0; i < candidates.length; i++) {
-                const e = candidates[i] as Enemy;
-                if (!e || (excludeId && e.id === excludeId)) continue;
-                const cx = e.x + e.width / 2;
-                const cy = e.y + e.height / 2;
-                const dx = cx - x;
-                const dy = cy - y;
-                const d2 = dx * dx + dy * dy;
-                if (d2 < bestDist) {
-                    bestDist = d2;
-                    best = e;
-                }
-            }
-            if (best) {
-                break;
-            }
-        }
-
-        if (best) return best;
-
-        // Fallback: scan all enemies if nothing was found nearby
         for (let i = 0; i < state.enemies.length; i++) {
             const e = state.enemies[i];
-            if (excludeId && e.id === excludeId) continue;
+            if (!e || (excludeId && e.id === excludeId)) continue;
             const cx = e.x + e.width / 2;
             const cy = e.y + e.height / 2;
             const dx = cx - x;
@@ -1925,13 +1904,33 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     if (target) {
                         const tx = target.x + target.width / 2;
                         const ty = target.y + target.height / 2;
-                        const dx = tx - impactX;
-                        const dy = ty - impactY;
-                        const mag = Math.hypot(dx, dy) || 1;
-                        const baseSpeed = Math.hypot(p.speedX || 0, p.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
-                        const nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
-                        const vx = (dx / mag) * nextSpeed;
-                        const vy = (dy / mag) * nextSpeed; // positive is downward
+                        let dirX = tx - impactX;
+                        let dirY = ty - impactY;
+                        let dirLen = Math.hypot(dirX, dirY);
+                        if (dirLen < 1e-3) {
+                            const prevWorldVX = p.speedX || 0;
+                            const prevWorldVY = -(p.speedY);
+                            const prevLen = Math.hypot(prevWorldVX, prevWorldVY);
+                            if (prevLen > 1e-3) {
+                                dirX = prevWorldVX / prevLen;
+                                dirY = prevWorldVY / prevLen;
+                            } else {
+                                dirX = 0;
+                                dirY = -1;
+                            }
+                        } else {
+                            dirX /= dirLen;
+                            dirY /= dirLen;
+                        }
+
+                        let baseSpeed = Math.hypot(p.speedX || 0, p.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
+                        let nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
+                        if (!isLastStand) {
+                            nextSpeed = Math.max(nextSpeed, MIN_RICOCHET_SPEED);
+                        }
+
+                        const vx = dirX * nextSpeed;
+                        const vy = dirY * nextSpeed; // positive is downward
                         const bounce = projectilePool.current.get();
                         bounce.id = generateId();
                         bounce.x = impactX - RICOCHET_DIAMETER / 2;
@@ -2144,13 +2143,33 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                         if (target) {
                             const tx = target.x + target.width / 2;
                             const ty = target.y + target.height / 2;
-                            const dx = tx - impactX;
-                            const dy = ty - impactY;
-                            const mag = Math.hypot(dx, dy) || 1;
-                            const baseSpeed = Math.hypot(playerP.speedX || 0, playerP.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
-                            const nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
-                            const vx = (dx / mag) * nextSpeed;
-                            const vy = (dy / mag) * nextSpeed;
+                            let dirX = tx - impactX;
+                            let dirY = ty - impactY;
+                            let dirLen = Math.hypot(dirX, dirY);
+                            if (dirLen < 1e-3) {
+                                const prevWorldVX = playerP.speedX || 0;
+                                const prevWorldVY = -(playerP.speedY);
+                                const prevLen = Math.hypot(prevWorldVX, prevWorldVY);
+                                if (prevLen > 1e-3) {
+                                    dirX = prevWorldVX / prevLen;
+                                    dirY = prevWorldVY / prevLen;
+                                } else {
+                                    dirX = 0;
+                                    dirY = -1;
+                                }
+                            } else {
+                                dirX /= dirLen;
+                                dirY /= dirLen;
+                            }
+
+                            let baseSpeed = Math.hypot(playerP.speedX || 0, playerP.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
+                            let nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
+                            if (!isLastStand) {
+                                nextSpeed = Math.max(nextSpeed, MIN_RICOCHET_SPEED);
+                            }
+
+                            const vx = dirX * nextSpeed;
+                            const vy = dirY * nextSpeed;
                             const ricochet = projectilePool.current.get();
                             ricochet.id = generateId();
                             ricochet.x = impactX - RICOCHET_DIAMETER / 2;

@@ -9,6 +9,7 @@ export interface GameObject {
   y: number;
   width: number;
   height: number;
+  __gridMark?: number;
 }
 
 export type MovementPattern = 'STRAIGHT_DOWN' | 'SINE_WAVE' | 'ZIG_ZAG' | 'DRIFTING' | 'ACCELERATING';

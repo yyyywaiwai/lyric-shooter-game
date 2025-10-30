@@ -39,25 +39,33 @@ class ObjectPool<T> {
 }
 
 // Spatial grid for collision optimization
+const GRID_MARK_PROP = '__gridMark' as const;
+
 class SpatialGrid {
   private cellSize: number;
   private cols: number;
   private rows: number;
   private grid: Set<any>[][];
+  private queryToken = 0;
 
   constructor(width: number, height: number, cellSize = 64) {
     this.cellSize = cellSize;
     this.cols = Math.ceil(width / cellSize);
     this.rows = Math.ceil(height / cellSize);
-    this.clear();
+    this.grid = [];
+    for (let row = 0; row < this.rows; row++) {
+      const rowSets: Set<any>[] = [];
+      for (let col = 0; col < this.cols; col++) {
+        rowSets[col] = new Set();
+      }
+      this.grid[row] = rowSets;
+    }
   }
 
   clear(): void {
-    this.grid = [];
     for (let row = 0; row < this.rows; row++) {
-      this.grid[row] = [];
       for (let col = 0; col < this.cols; col++) {
-        this.grid[row][col] = new Set();
+        this.grid[row][col].clear();
       }
     }
   }
@@ -75,8 +83,9 @@ class SpatialGrid {
     }
   }
 
-  queryNearby(obj: any): Set<any> {
-    const nearby = new Set<any>();
+  queryNearby(obj: any, result: any[] = []): any[] {
+    const token = ++this.queryToken;
+    result.length = 0;
     const minCol = Math.max(0, Math.floor((obj.x - this.cellSize) / this.cellSize));
     const maxCol = Math.min(this.cols - 1, Math.floor((obj.x + obj.width + this.cellSize) / this.cellSize));
     const minRow = Math.max(0, Math.floor((obj.y - this.cellSize) / this.cellSize));
@@ -84,11 +93,30 @@ class SpatialGrid {
 
     for (let row = minRow; row <= maxRow; row++) {
       for (let col = minCol; col <= maxCol; col++) {
-        this.grid[row][col].forEach(item => nearby.add(item));
+        const cell = this.grid[row][col];
+        for (const item of cell) {
+          if ((item as any)[GRID_MARK_PROP] === token) continue;
+          (item as any)[GRID_MARK_PROP] = token;
+          result.push(item);
+        }
       }
     }
-    return nearby;
+    return result;
   }
+}
+
+// Utility to mutate arrays in place without allocating new ones every frame.
+function filterInPlace<T>(array: T[], predicate: (value: T, index: number) => boolean, onRemove?: (value: T) => void): void {
+  let writeIndex = 0;
+  for (let i = 0; i < array.length; i++) {
+    const value = array[i];
+    if (predicate(value, i)) {
+      array[writeIndex++] = value;
+    } else if (onRemove) {
+      onRemove(value);
+    }
+  }
+  array.length = writeIndex;
 }
 
 const GAME_WIDTH = 800;
@@ -185,7 +213,7 @@ const ENEMY_COLORS = {
 };
 
 // Restore original DOM components with optimizations
-const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLastStand: boolean; }) => {
+const EnemyComponent = ({ enemy, isLastStand }: { enemy: Enemy; isLastStand: boolean; }) => {
     let colorClass = 'text-red-400';
     if (enemy.isElite) {
          switch (enemy.eliteType) {
@@ -233,9 +261,9 @@ const EnemyComponent = React.memo(({ enemy, isLastStand }: { enemy: Enemy; isLas
             {flashClass && <div className={`absolute w-full h-full bg-white rounded-full ${flashClass}`}></div>}
         </div>
     );
-});
+};
 
-const ProjectileComponent = React.memo(({ p }: { p: Projectile }) => {
+const ProjectileComponent = ({ p }: { p: Projectile }) => {
     const isRico = p.isRicochetPrimary || p.hasBounced;
     const color = isRico ? 'bg-rose-400' : 'bg-yellow-300';
     const style: React.CSSProperties = {
@@ -247,9 +275,9 @@ const ProjectileComponent = React.memo(({ p }: { p: Projectile }) => {
     return (
         <div style={style} className={`absolute ${color} ${shapeClass} box-shadow-neon`}></div>
     );
-});
+};
 
-const EnemyProjectileComponent = React.memo(({ p }: { p: EnemyProjectile }) => {
+const EnemyProjectileComponent = ({ p }: { p: EnemyProjectile }) => {
     const projectileColors: Record<ShooterAttackPattern, string> = {
         'HOMING': 'bg-fuchsia-500',
         'STRAIGHT_DOWN': 'bg-yellow-500',
@@ -271,23 +299,23 @@ const EnemyProjectileComponent = React.memo(({ p }: { p: EnemyProjectile }) => {
             className={`absolute rounded-full transition-opacity duration-200 ${p.attackPattern === 'DELAYED_HOMING' && p.isDelayed ? 'animate-pulse' : ''} ${projectileColor} ${sizeClass} ${opacityClass}`}
         ></div>
     );
-});
+};
 
-const MineComponent = React.memo(({ mine }: { mine: Mine }) => (
+const MineComponent = ({ mine }: { mine: Mine }) => (
     <div
         style={{ transform: `translate3d(${mine.x}px, ${mine.y}px, 0)`, width: mine.width, height: mine.height }}
         className="absolute bg-red-800 border-2 border-red-500 rounded-full animate-pulse"
     ></div>
-));
+);
 
-const LaserBeamComponent = React.memo(({ x, y }: { x: number, y:number }) => (
+const LaserBeamComponent = ({ x, y }: { x: number, y:number }) => (
     <div
         style={{ transform: `translate3d(${x + PLAYER_WIDTH / 2 - 5}px, 0, 0)`, width: 10, height: y }}
         className="absolute bg-gradient-to-t from-red-400 to-orange-300 rounded-t-full animate-pulse"
     ></div>
-));
+);
 
-const ItemComponent = React.memo(({ item }: { item: Item }) => {
+const ItemComponent = ({ item }: { item: Item }) => {
     const getIcon = () => {
         const iconProps = { className: "w-8 h-8 drop-shadow-[0_0_8px_rgba(252,211,77,0.8)]" };
         switch (item.type) {
@@ -311,7 +339,7 @@ const ItemComponent = React.memo(({ item }: { item: Item }) => {
         {getIcon()}
       </div>
     );
-});
+};
 
 // Keep minimal DOM components for special effects only
 const PlayerComponent = React.memo(({ x, y, isInvincible, isLastStand, hasPhaseShield }: { x: number; y: number; isInvincible: boolean; isLastStand: boolean; hasPhaseShield: boolean; }) => (
@@ -338,8 +366,7 @@ const PlayerComponent = React.memo(({ x, y, isInvincible, isLastStand, hasPhaseS
     </div>
 ));
 
-
-const ExplosionComponent = React.memo(({ explosion }: { explosion: Explosion }) => {
+const ExplosionComponent = ({ explosion }: { explosion: Explosion }) => {
     const sizeClass = explosion.size === 'large' ? 'w-32 h-32' : 'w-16 h-16';
     const colorClass = explosion.size === 'large' ? 'bg-orange-400' : 'bg-yellow-300';
     return (
@@ -348,7 +375,7 @@ const ExplosionComponent = React.memo(({ explosion }: { explosion: Explosion }) 
             className={`explosion ${sizeClass} ${colorClass}`}
         ></div>
     );
-});
+};
 
 const FloatingTextComponent = React.memo(({ text, x, y, createdAt }: FloatingText) => {
     const progress = Math.min(1, (Date.now() - createdAt) / FLOATING_TEXT_DURATION);
@@ -380,8 +407,20 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
   // Object pools for performance
   const projectilePool = useRef(new ObjectPool<Projectile>(
-    () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0 }),
-    (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = PROJECTILE_WIDTH; obj.height = PROJECTILE_HEIGHT; obj.speedY = 0; obj.speedX = undefined; }
+    () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0, speedX: 0 }),
+    (obj) => {
+      obj.id = 0;
+      obj.x = 0;
+      obj.y = 0;
+      obj.width = PROJECTILE_WIDTH;
+      obj.height = PROJECTILE_HEIGHT;
+      obj.speedY = 0;
+      obj.speedX = 0;
+      obj.isRicochetPrimary = undefined;
+      obj.hasBounced = undefined;
+      obj.remainingBounces = undefined;
+      obj.rotationDeg = undefined;
+    }
   ));
   
   const enemyProjectilePool = useRef(new ObjectPool<EnemyProjectile>(
@@ -477,6 +516,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       // Backspace key long press for restart
       backspacePressStart: 0,
       backspacePressProgress: 0,
+      fps: 0,
   });
 
   const [, forceUpdate] = useState(0);
@@ -490,6 +530,12 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   const spacebarPressStart = useRef(0);
   const initialItemAppliedRef = useRef(false);
   const loopStartedRef = useRef(false);
+  const fpsStatsRef = useRef({ frames: 0, lastTime: performance.now(), fps: 0 });
+  const collisionBuffersRef = useRef({
+    enemies: [] as Enemy[],
+    enemyProjectiles: [] as EnemyProjectile[],
+    mines: [] as Mine[],
+  });
   
   const totalChars = useMemo(() => lyrics.reduce((acc, line) => acc + line.text.replace(/\s/g, '').length, 0), [lyrics]);
   const totalLyricLines = useMemo(() => lyrics.length, [lyrics]);
@@ -714,7 +760,9 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             state.enemiesDefeated++;
           });
           const onScreenEnemyIds = new Set(onScreenEnemies.map(e => e.id));
-          state.enemies = state.enemies.filter(e => !onScreenEnemyIds.has(e.id));
+          if (onScreenEnemyIds.size > 0) {
+            filterInPlace(state.enemies, (enemy) => !onScreenEnemyIds.has(enemy.id));
+          }
       } else if (state.stockedItem === 'LASER_BEAM') {
           state.isLaserActive = true;
           state.laserEndTime = Date.now() + LASER_DURATION;
@@ -748,6 +796,18 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     const isLastStand = state.lives === 1;
 
     if (state.isGameEnding) return;
+
+    // --- FPS Tracking ---
+    const fpsStats = fpsStatsRef.current;
+    fpsStats.frames++;
+    const elapsedSinceSample = now - fpsStats.lastTime;
+    if (elapsedSinceSample >= 500) {
+      const measuredFps = (fpsStats.frames * 1000) / elapsedSinceSample;
+      fpsStats.fps = measuredFps;
+      fpsStats.frames = 0;
+      fpsStats.lastTime = now;
+      state.fps = Math.round(measuredFps);
+    }
 
     // --- Super Hard Mode Mid-game Buff ---
     const songProgressPercentage = totalLyricLines > 0 ? (state.currentLyricIndex / totalLyricLines) * 100 : 0;
@@ -828,64 +888,79 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             currentProjectileSpeed *= 1.3;
         }
 
-        // Create new projectile object for proper React re-rendering
         // Ricochet triggers every shot during Last Stand, otherwise every other shot
         const isRicochetPrimary = state.hasRicochetShot && (isLastStand || state.mainShotCounter % 2 === 0);
-        state.projectiles.push({ 
-            id: generateId(), 
-            x: pX, 
-            y: pY, 
-            width: PROJECTILE_WIDTH, 
-            height: PROJECTILE_HEIGHT, 
-            speedY: currentProjectileSpeed,
-            isRicochetPrimary,
-            remainingBounces: isRicochetPrimary ? state.ricochetStacks : 0,
-        });
+        const mainProjectile = projectilePool.current.get();
+        mainProjectile.id = generateId();
+        mainProjectile.x = pX;
+        mainProjectile.y = pY;
+        mainProjectile.width = PROJECTILE_WIDTH;
+        mainProjectile.height = PROJECTILE_HEIGHT;
+        mainProjectile.speedY = currentProjectileSpeed;
+        mainProjectile.speedX = 0;
+        mainProjectile.isRicochetPrimary = isRicochetPrimary;
+        mainProjectile.hasBounced = false;
+        mainProjectile.remainingBounces = isRicochetPrimary ? state.ricochetStacks : 0;
+        state.projectiles.push(mainProjectile);
         
         const diagonalInterval = isLastStand ? 2 : 3;
         if(state.hasDiagonalShot && state.mainShotCounter % diagonalInterval === 0) {
-            state.projectiles.push({ 
-                id: generateId(), 
-                x: pX, 
-                y: pY, 
-                width: PROJECTILE_WIDTH, 
-                height: PROJECTILE_HEIGHT, 
-                speedY: currentProjectileSpeed, 
-                speedX: currentProjectileSpeed * 0.4 
-            });
-            state.projectiles.push({ 
-                id: generateId(), 
-                x: pX, 
-                y: pY, 
-                width: PROJECTILE_WIDTH, 
-                height: PROJECTILE_HEIGHT, 
-                speedY: currentProjectileSpeed, 
-                speedX: -currentProjectileSpeed * 0.4 
-            });
+            const rightDiagonal = projectilePool.current.get();
+            rightDiagonal.id = generateId();
+            rightDiagonal.x = pX;
+            rightDiagonal.y = pY;
+            rightDiagonal.width = PROJECTILE_WIDTH;
+            rightDiagonal.height = PROJECTILE_HEIGHT;
+            rightDiagonal.speedY = currentProjectileSpeed;
+            rightDiagonal.speedX = currentProjectileSpeed * 0.4;
+            rightDiagonal.isRicochetPrimary = false;
+            rightDiagonal.hasBounced = false;
+            rightDiagonal.remainingBounces = 0;
+            state.projectiles.push(rightDiagonal);
+
+            const leftDiagonal = projectilePool.current.get();
+            leftDiagonal.id = generateId();
+            leftDiagonal.x = pX;
+            leftDiagonal.y = pY;
+            leftDiagonal.width = PROJECTILE_WIDTH;
+            leftDiagonal.height = PROJECTILE_HEIGHT;
+            leftDiagonal.speedY = currentProjectileSpeed;
+            leftDiagonal.speedX = -currentProjectileSpeed * 0.4;
+            leftDiagonal.isRicochetPrimary = false;
+            leftDiagonal.hasBounced = false;
+            leftDiagonal.remainingBounces = 0;
+            state.projectiles.push(leftDiagonal);
         }
 
         const sideInterval = isLastStand ? 1 : 2;
         if(state.hasSideShot && state.mainShotCounter % sideInterval === 0) {
             const sideProjectileY = state.playerY + PLAYER_HEIGHT / 2 - PROJECTILE_WIDTH / 2;
             
-            state.projectiles.push({ 
-                id: generateId(), 
-                x: state.playerX + PLAYER_WIDTH/2, 
-                y: sideProjectileY, 
-                width: PROJECTILE_HEIGHT, 
-                height: PROJECTILE_WIDTH, 
-                speedY: 0, 
-                speedX: -currentProjectileSpeed 
-            });
-            state.projectiles.push({ 
-                id: generateId(), 
-                x: state.playerX + PLAYER_WIDTH/2, 
-                y: sideProjectileY, 
-                width: PROJECTILE_HEIGHT, 
-                height: PROJECTILE_WIDTH, 
-                speedY: 0, 
-                speedX: currentProjectileSpeed 
-            });
+            const leftSide = projectilePool.current.get();
+            leftSide.id = generateId();
+            leftSide.x = state.playerX + PLAYER_WIDTH / 2;
+            leftSide.y = sideProjectileY;
+            leftSide.width = PROJECTILE_HEIGHT;
+            leftSide.height = PROJECTILE_WIDTH;
+            leftSide.speedY = 0;
+            leftSide.speedX = -currentProjectileSpeed;
+            leftSide.isRicochetPrimary = false;
+            leftSide.hasBounced = false;
+            leftSide.remainingBounces = 0;
+            state.projectiles.push(leftSide);
+
+            const rightSide = projectilePool.current.get();
+            rightSide.id = generateId();
+            rightSide.x = state.playerX + PLAYER_WIDTH / 2;
+            rightSide.y = sideProjectileY;
+            rightSide.width = PROJECTILE_HEIGHT;
+            rightSide.height = PROJECTILE_WIDTH;
+            rightSide.speedY = 0;
+            rightSide.speedX = currentProjectileSpeed;
+            rightSide.isRicochetPrimary = false;
+            rightSide.hasBounced = false;
+            rightSide.remainingBounces = 0;
+            state.projectiles.push(rightSide);
         }
     }
 
@@ -924,27 +999,44 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         state.stockedItemActiveUntil = 0;
         state.stockedItem = null;
     }
-    state.enemies.forEach(e => { if (e.isFlashing && currentTime > e.flashEndTime!) e.isFlashing = false; });
-    state.mines = state.mines.filter(m => currentTime - m.createdAt < MINE_LIFETIME);
-    state.floatingTexts = state.floatingTexts.filter(ft => currentTime - ft.createdAt < FLOATING_TEXT_DURATION);
-    
+    for (let i = 0; i < state.enemies.length; i++) {
+      const e = state.enemies[i];
+      if (e.isFlashing && currentTime > e.flashEndTime!) e.isFlashing = false;
+    }
+    filterInPlace(state.mines, (m) => currentTime - m.createdAt < MINE_LIFETIME);
+    filterInPlace(state.floatingTexts, (ft) => currentTime - ft.createdAt < FLOATING_TEXT_DURATION);
+
     // Clean up expired explosions and return to pool
-    const expiredExplosions = state.explosions.filter(ex => currentTime - ex.createdAt > EXPLOSION_DURATION);
-    explosionPool.current.releaseAll(expiredExplosions);
-    state.explosions = state.explosions.filter(ex => currentTime - ex.createdAt <= EXPLOSION_DURATION);
+    filterInPlace(state.explosions, (ex) => {
+      const keep = currentTime - ex.createdAt <= EXPLOSION_DURATION;
+      if (!keep) {
+        explosionPool.current.release(ex);
+      }
+      return keep;
+    });
 
     // --- Object Movement (Optimized) ---
     // Update projectiles in-place and filter out-of-bounds
-    state.projectiles = state.projectiles.map(p => ({ ...p, y: p.y - p.speedY * dt, x: p.x + (p.speedX || 0) * dt })).filter(p => p.y > -p.height && p.y < GAME_HEIGHT && p.x > -p.width && p.x < GAME_WIDTH);
+    filterInPlace(state.projectiles, (p) => {
+      p.y -= p.speedY * dt;
+      p.x += (p.speedX || 0) * dt;
+      const active = p.y > -p.height && p.y < GAME_HEIGHT && p.x > -p.width && p.x < GAME_WIDTH;
+      if (!active) {
+        projectilePool.current.release(p);
+      }
+      return active;
+    });
     
     const currentEnemyProjectileSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
     const fireBeatShooters = (triggerTime: number) => {
         const baseSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
         const playerCenterX = state.playerX + PLAYER_WIDTH / 2;
         const playerCenterY = state.playerY + PLAYER_HEIGHT / 2;
-        state.enemies.forEach(enemy => {
-            if (!enemy.isShooter || enemy.attackPattern !== 'BEAT') return;
-            if (enemy.y + enemy.height < 0) return;
+        const enemies = state.enemies;
+        for (let i = 0; i < enemies.length; i++) {
+            const enemy = enemies[i];
+            if (!enemy.isShooter || enemy.attackPattern !== 'BEAT') continue;
+            if (enemy.y + enemy.height < 0) continue;
             const enemyCenterX = enemy.x + enemy.width / 2;
             const enemyMuzzleY = enemy.y + enemy.height;
             const lastShot = enemy.lastShotTime ?? (triggerTime - BEAT_SPEED_MIN_INTERVAL);
@@ -953,7 +1045,8 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             const t = (clampedInterval - BEAT_SPEED_MIN_INTERVAL) / (BEAT_SPEED_MAX_INTERVAL - BEAT_SPEED_MIN_INTERVAL);
             const speedMultiplier = 1 + t * (BEAT_MAX_SPEED_MULTIPLIER - 1);
             const projectileSpeed = baseSpeed * speedMultiplier;
-            [-BEAT_TARGET_OFFSET, BEAT_TARGET_OFFSET].forEach(offset => {
+            for (let offsetIndex = 0; offsetIndex < 2; offsetIndex++) {
+                const offset = offsetIndex === 0 ? -BEAT_TARGET_OFFSET : BEAT_TARGET_OFFSET;
                 const targetX = playerCenterX + offset;
                 const targetY = playerCenterY;
                 const dx = targetX - enemyCenterX;
@@ -970,151 +1063,188 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 proj.speedY = (dy / distance) * projectileSpeed;
                 proj.beatTargetSide = offset < 0 ? 'LEFT' : 'RIGHT';
                 state.enemyProjectiles.push(proj);
-            });
+            }
             enemy.lastShotTime = triggerTime;
-        });
+        }
     };
 
     // Update enemy projectiles
     const playerCenterX = state.playerX + PLAYER_WIDTH / 2;
     const playerCenterY = state.playerY + PLAYER_HEIGHT / 2;
-    state.enemyProjectiles = state.enemyProjectiles.map(p => {
-        const updatedProjectile = { ...p };
-
-        switch (updatedProjectile.attackPattern) {
-            case 'DELAYED_HOMING': {
-                if (updatedProjectile.isDelayed) {
-                    if (currentTime > (updatedProjectile.delayEndTime || 0)) {
-                        updatedProjectile.isDelayed = false;
-                        const angle = Math.atan2(playerCenterY - updatedProjectile.y, playerCenterX - updatedProjectile.x);
-                        updatedProjectile.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 1.5;
-                        updatedProjectile.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 1.5;
-                        updatedProjectile.x += updatedProjectile.speedX * dt;
-                        updatedProjectile.y += updatedProjectile.speedY * dt;
-                    }
-                } else {
-                    updatedProjectile.x += updatedProjectile.speedX * dt;
-                    updatedProjectile.y += updatedProjectile.speedY * dt;
-                }
-                break;
+    filterInPlace(state.enemyProjectiles, (proj) => {
+      switch (proj.attackPattern) {
+        case 'DELAYED_HOMING': {
+          if (proj.isDelayed) {
+            if (currentTime > (proj.delayEndTime || 0)) {
+              proj.isDelayed = false;
+              const angle = Math.atan2(playerCenterY - proj.y, playerCenterX - proj.x);
+              proj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 1.5;
+              proj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 1.5;
+              proj.x += proj.speedX * dt;
+              proj.y += proj.speedY * dt;
             }
-            case 'DECELERATE': {
-                let directionX = updatedProjectile.directionX;
-                let directionY = updatedProjectile.directionY;
-                if (directionX === undefined || directionY === undefined) {
-                    const currentLen = Math.hypot(updatedProjectile.speedX, updatedProjectile.speedY) || 1;
-                    directionX = updatedProjectile.speedX / currentLen;
-                    directionY = updatedProjectile.speedY / currentLen;
-                    updatedProjectile.directionX = directionX;
-                    updatedProjectile.directionY = directionY;
-                }
-
-                const initialSpeed = updatedProjectile.initialSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_INITIAL_MULTIPLIER);
-                const finalSpeed = updatedProjectile.slowSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_FINAL_MULTIPLIER);
-
-                const initialDistance = updatedProjectile.decelerateInitialDistance
-                    ?? Math.max(1, Math.hypot(playerCenterX - updatedProjectile.x, playerCenterY - updatedProjectile.y));
-                updatedProjectile.decelerateInitialDistance = initialDistance;
-
-                const distanceToPlayer = Math.hypot(playerCenterX - updatedProjectile.x, playerCenterY - updatedProjectile.y);
-                const clampedDistance = Math.min(Math.max(distanceToPlayer, 0), initialDistance);
-                const progress = initialDistance > 0 ? 1 - (clampedDistance / initialDistance) : 1;
-                const easedProgress = Math.min(Math.max(progress, 0), 1);
-                const targetSpeed = initialSpeed - (initialSpeed - finalSpeed) * easedProgress;
-
-                updatedProjectile.speedX = (directionX || 0) * targetSpeed;
-                updatedProjectile.speedY = (directionY || 0) * targetSpeed;
-                updatedProjectile.x += updatedProjectile.speedX * dt;
-                updatedProjectile.y += updatedProjectile.speedY * dt;
-                break;
-            }
-            case 'CIRCLE': {
-                const mode = updatedProjectile.circleMode || 'APPROACH';
-                if (mode === 'APPROACH') {
-                    updatedProjectile.x += updatedProjectile.speedX * dt;
-                    updatedProjectile.y += updatedProjectile.speedY * dt;
-                    const distanceToPlayer = Math.hypot(playerCenterX - updatedProjectile.x, playerCenterY - updatedProjectile.y);
-                    if (distanceToPlayer <= CIRCLE_TRIGGER_RADIUS) {
-                        updatedProjectile.circleMode = 'GUIDE_ORBIT';
-                        updatedProjectile.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
-                        updatedProjectile.orbitCenterX = playerCenterX;
-                        updatedProjectile.orbitCenterY = playerCenterY;
-                        updatedProjectile.orbitRadius = Math.max(
-                          CIRCLE_MIN_ORBIT_RADIUS,
-                          Math.hypot(updatedProjectile.x - playerCenterX, updatedProjectile.y - playerCenterY)
-                        );
-                        updatedProjectile.orbitAngle = Math.atan2(
-                          updatedProjectile.y - playerCenterY,
-                          updatedProjectile.x - playerCenterX
-                        );
-                        updatedProjectile.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
-                        updatedProjectile.orbitAccumulatedAngle = 0;
-                        updatedProjectile.orbitDirection = updatedProjectile.orbitDirection || (Math.random() > 0.5 ? 1 : -1);
-                        updatedProjectile.speedX = 0;
-                        updatedProjectile.speedY = 0;
-                    }
-                } else if (mode === 'GUIDE_ORBIT') {
-                    if (currentTime >= (updatedProjectile.circleGuideUntil || 0)) {
-                        updatedProjectile.circleMode = 'ORBIT';
-                        updatedProjectile.circleGuideUntil = undefined;
-                    }
-                } else if (mode === 'ORBIT') {
-                    const angularSpeed = (updatedProjectile.orbitAngularSpeed || CIRCLE_ORBIT_ANGULAR_SPEED) * (updatedProjectile.orbitDirection || 1);
-                    updatedProjectile.orbitAngle = (updatedProjectile.orbitAngle || 0) + angularSpeed * dt;
-                    updatedProjectile.orbitAccumulatedAngle = (updatedProjectile.orbitAccumulatedAngle || 0) + Math.abs(angularSpeed * dt);
-                    const radius = updatedProjectile.orbitRadius || CIRCLE_MIN_ORBIT_RADIUS;
-                    updatedProjectile.x = (updatedProjectile.orbitCenterX || playerCenterX) + Math.cos(updatedProjectile.orbitAngle!) * radius;
-                    updatedProjectile.y = (updatedProjectile.orbitCenterY || playerCenterY) + Math.sin(updatedProjectile.orbitAngle!) * radius;
-                    if ((updatedProjectile.orbitAccumulatedAngle || 0) >= Math.PI * 2 * CIRCLE_ORBIT_LOOPS) {
-                        updatedProjectile.circleMode = 'GUIDE_DROP';
-                        updatedProjectile.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
-                        updatedProjectile.speedX = 0;
-                        updatedProjectile.speedY = 0;
-                    }
-                } else if (mode === 'GUIDE_DROP') {
-                    if (currentTime >= (updatedProjectile.circleGuideUntil || 0)) {
-                        updatedProjectile.circleMode = 'DROP';
-                        updatedProjectile.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
-                        updatedProjectile.speedX = 0;
-                        updatedProjectile.speedY = currentEnemyProjectileSpeed;
-                    }
-                } else { // DROP
-                    if (updatedProjectile.circleGuideUntil !== undefined && currentTime >= updatedProjectile.circleGuideUntil) {
-                        updatedProjectile.circleGuideUntil = undefined;
-                    }
-                    updatedProjectile.x += updatedProjectile.speedX * dt;
-                    updatedProjectile.y += updatedProjectile.speedY * dt;
-                }
-                break;
-            }
-            default: {
-                updatedProjectile.x += updatedProjectile.speedX * dt;
-                updatedProjectile.y += updatedProjectile.speedY * dt;
-            }
+          } else {
+            proj.x += proj.speedX * dt;
+            proj.y += proj.speedY * dt;
+          }
+          break;
         }
+        case 'DECELERATE': {
+          let directionX = proj.directionX;
+          let directionY = proj.directionY;
+          if (directionX === undefined || directionY === undefined) {
+            const currentLen = Math.hypot(proj.speedX, proj.speedY) || 1;
+            directionX = proj.speedX / currentLen;
+            directionY = proj.speedY / currentLen;
+            proj.directionX = directionX;
+            proj.directionY = directionY;
+          }
 
-        return updatedProjectile;
-    }).filter(p => p.y < GAME_HEIGHT + 20 && p.y > -20 && p.x > -20 && p.x < GAME_WIDTH + 20);
+          const initialSpeed = proj.initialSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_INITIAL_MULTIPLIER);
+          const finalSpeed = proj.slowSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_FINAL_MULTIPLIER);
 
-    // Update items with new objects for React re-rendering
-    state.items = state.items.map(item => ({ ...item, y: item.y + item.speedY * dt })).filter(item => item.y < GAME_HEIGHT);
-    state.enemies = state.enemies.map(e => {
-        let { x: newX, y: newY, speedX: newSpeedX, speedY: newSpeedY } = e;
-        if(e.movementPattern === 'ACCELERATING' && e.accelerationY) newSpeedY += e.accelerationY * dt;
-        newY += newSpeedY * dt;
-        switch (e.movementPattern) {
-            case 'SINE_WAVE': newX = e.initialX! + Math.sin(newY * e.frequency!) * e.amplitude!; break;
-            case 'ZIG_ZAG': if ((newX + newSpeedX! * dt <= 0) || (newX + newSpeedX! * dt >= GAME_WIDTH - e.width)) newSpeedX = -(e.speedX!); newX += newSpeedX! * dt; break;
-            case 'DRIFTING': newX += newSpeedX! * dt; break;
+          const initialDistance = proj.decelerateInitialDistance
+            ?? Math.max(1, Math.hypot(playerCenterX - proj.x, playerCenterY - proj.y));
+          proj.decelerateInitialDistance = initialDistance;
+
+          const distanceToPlayer = Math.hypot(playerCenterX - proj.x, playerCenterY - proj.y);
+          const clampedDistance = Math.min(Math.max(distanceToPlayer, 0), initialDistance);
+          const progress = initialDistance > 0 ? 1 - (clampedDistance / initialDistance) : 1;
+          const easedProgress = Math.min(Math.max(progress, 0), 1);
+          const targetSpeed = initialSpeed - (initialSpeed - finalSpeed) * easedProgress;
+
+          proj.speedX = (directionX || 0) * targetSpeed;
+          proj.speedY = (directionY || 0) * targetSpeed;
+          proj.x += proj.speedX * dt;
+          proj.y += proj.speedY * dt;
+          break;
         }
-        newX = Math.max(0, Math.min(GAME_WIDTH - e.width, newX));
-        return { ...e, x: newX, y: newY, speedY: newSpeedY, speedX: newSpeedX };
-    }).filter(e => e.y < GAME_HEIGHT);
+        case 'CIRCLE': {
+          const mode = proj.circleMode || 'APPROACH';
+          if (mode === 'APPROACH') {
+            proj.x += proj.speedX * dt;
+            proj.y += proj.speedY * dt;
+            const distanceToPlayer = Math.hypot(playerCenterX - proj.x, playerCenterY - proj.y);
+            if (distanceToPlayer <= CIRCLE_TRIGGER_RADIUS) {
+              proj.circleMode = 'GUIDE_ORBIT';
+              proj.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
+              proj.orbitCenterX = playerCenterX;
+              proj.orbitCenterY = playerCenterY;
+              proj.orbitRadius = Math.max(
+                CIRCLE_MIN_ORBIT_RADIUS,
+                Math.hypot(proj.x - playerCenterX, proj.y - playerCenterY)
+              );
+              proj.orbitAngle = Math.atan2(
+                proj.y - playerCenterY,
+                proj.x - playerCenterX
+              );
+              proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
+              proj.orbitAccumulatedAngle = 0;
+              proj.orbitDirection = proj.orbitDirection || (Math.random() > 0.5 ? 1 : -1);
+              proj.speedX = 0;
+              proj.speedY = 0;
+            }
+          } else if (mode === 'GUIDE_ORBIT') {
+            if (currentTime >= (proj.circleGuideUntil || 0)) {
+              proj.circleMode = 'ORBIT';
+              proj.circleGuideUntil = undefined;
+            }
+          } else if (mode === 'ORBIT') {
+            const angularSpeed = (proj.orbitAngularSpeed || CIRCLE_ORBIT_ANGULAR_SPEED) * (proj.orbitDirection || 1);
+            proj.orbitAngle = (proj.orbitAngle || 0) + angularSpeed * dt;
+            proj.orbitAccumulatedAngle = (proj.orbitAccumulatedAngle || 0) + Math.abs(angularSpeed * dt);
+            const radius = proj.orbitRadius || CIRCLE_MIN_ORBIT_RADIUS;
+            proj.x = (proj.orbitCenterX || playerCenterX) + Math.cos(proj.orbitAngle || 0) * radius;
+            proj.y = (proj.orbitCenterY || playerCenterY) + Math.sin(proj.orbitAngle || 0) * radius;
+            if ((proj.orbitAccumulatedAngle || 0) >= Math.PI * 2 * CIRCLE_ORBIT_LOOPS) {
+              proj.circleMode = 'GUIDE_DROP';
+              proj.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
+              proj.speedX = 0;
+              proj.speedY = 0;
+            }
+          } else if (mode === 'GUIDE_DROP') {
+            if (currentTime >= (proj.circleGuideUntil || 0)) {
+              proj.circleMode = 'DROP';
+              proj.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
+              proj.speedX = 0;
+              proj.speedY = currentEnemyProjectileSpeed;
+            }
+          } else { // DROP
+            if (proj.circleGuideUntil !== undefined && currentTime >= proj.circleGuideUntil) {
+              proj.circleGuideUntil = undefined;
+            }
+            proj.x += proj.speedX * dt;
+            proj.y += proj.speedY * dt;
+          }
+          break;
+        }
+        default:
+          proj.x += proj.speedX * dt;
+          proj.y += proj.speedY * dt;
+          break;
+      }
+
+      return proj.y < GAME_HEIGHT + 20 && proj.y > -20 && proj.x > -20 && proj.x < GAME_WIDTH + 20;
+    }, (proj) => {
+      enemyProjectilePool.current.release(proj);
+    });
+
+    // Update items and enemies without reallocating arrays
+    filterInPlace(state.items, (item) => {
+      item.y += item.speedY * dt;
+      return item.y < GAME_HEIGHT;
+    });
+
+    filterInPlace(state.enemies, (enemy) => {
+      let newX = enemy.x;
+      let newY = enemy.y;
+      let newSpeedY = enemy.speedY;
+      let newSpeedX = enemy.speedX ?? 0;
+
+      if (enemy.movementPattern === 'ACCELERATING' && enemy.accelerationY) {
+        newSpeedY += enemy.accelerationY * dt;
+      }
+
+      newY += newSpeedY * dt;
+
+      switch (enemy.movementPattern) {
+        case 'SINE_WAVE':
+          if (enemy.initialX !== undefined && enemy.frequency !== undefined && enemy.amplitude !== undefined) {
+            newX = enemy.initialX + Math.sin(newY * enemy.frequency) * enemy.amplitude;
+          }
+          break;
+        case 'ZIG_ZAG': {
+          const currentSpeedX = enemy.speedX ?? 0;
+          if ((newX + currentSpeedX * dt <= 0) || (newX + currentSpeedX * dt >= GAME_WIDTH - enemy.width)) {
+            newSpeedX = -currentSpeedX;
+          } else {
+            newSpeedX = currentSpeedX;
+          }
+          newX += newSpeedX * dt;
+          break;
+        }
+        case 'DRIFTING':
+          newX += (enemy.speedX ?? 0) * dt;
+          break;
+      }
+
+      newX = Math.max(0, Math.min(GAME_WIDTH - enemy.width, newX));
+
+      enemy.x = newX;
+      enemy.y = newY;
+      enemy.speedY = newSpeedY;
+      if (enemy.movementPattern === 'ZIG_ZAG' || enemy.movementPattern === 'DRIFTING') {
+        enemy.speedX = newSpeedX;
+      }
+
+      return enemy.y < GAME_HEIGHT;
+    });
 
     // Enemy state machines
-    state.enemies.forEach(e => {
+    for (let i = 0; i < state.enemies.length; i++) {
+        const e = state.enemies[i];
         if (e.eliteType === 'LASER') {
-            switch(e.laserState) {
+            switch (e.laserState) {
                 case 'AIMING':
                     if (currentTime > e.laserStateChangeTime! + 1000) { // 1s aim time
                         e.laserState = 'FIRING';
@@ -1134,12 +1264,13 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     break;
             }
         }
-    });
+    }
 
     // --- Enemy Firing ---
-    state.enemies.forEach(enemy => {
-        if (!enemy.isShooter) return;
-        if (enemy.attackPattern === 'BEAT') return;
+    for (let index = 0; index < state.enemies.length; index++) {
+        const enemy = state.enemies[index];
+        if (!enemy.isShooter) continue;
+        if (enemy.attackPattern === 'BEAT') continue;
         const cooldown = enemy.isElite && enemy.eliteType === 'MAGIC' ? ENEMY_FIRE_COOLDOWN / 3.5 : ENEMY_FIRE_COOLDOWN;
         if (currentTime - (enemy.lastShotTime || 0) > cooldown && !enemy.gatlingCooldown) {
             
@@ -1479,7 +1610,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                  setTimeout(() => { enemy.gatlingCooldown = false; }, ENEMY_FIRE_COOLDOWN);
             }
         }
-    });
+    }
 
     // --- Lyric Syncing and Enemy Spawning ---
     const audio = audioRef.current;
@@ -1609,11 +1740,26 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     spatialGrid.current.clear();
     
     // Insert all objects into spatial grid
-    state.enemies.forEach(e => spatialGrid.current.insert(e));
-    state.projectiles.forEach(p => spatialGrid.current.insert(p));
-    state.enemyProjectiles.forEach(p => spatialGrid.current.insert(p));
-    state.items.forEach(i => spatialGrid.current.insert(i));
-    state.mines.forEach(m => spatialGrid.current.insert(m));
+    const enemiesArray = state.enemies;
+    for (let i = 0; i < enemiesArray.length; i++) {
+      spatialGrid.current.insert(enemiesArray[i]);
+    }
+    const projectilesArray = state.projectiles;
+    for (let i = 0; i < projectilesArray.length; i++) {
+      spatialGrid.current.insert(projectilesArray[i]);
+    }
+    const enemyProjectilesArray = state.enemyProjectiles;
+    for (let i = 0; i < enemyProjectilesArray.length; i++) {
+      spatialGrid.current.insert(enemyProjectilesArray[i]);
+    }
+    const itemsArray = state.items;
+    for (let i = 0; i < itemsArray.length; i++) {
+      spatialGrid.current.insert(itemsArray[i]);
+    }
+    const minesArray = state.mines;
+    for (let i = 0; i < minesArray.length; i++) {
+      spatialGrid.current.insert(minesArray[i]);
+    }
     
     const hitProjectiles = new Set<Projectile>();
     const enemiesHitThisFrame = new Set<number>();
@@ -1717,27 +1863,30 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
 
     // Optimized Projectiles vs Enemies collision
-    state.projectiles.forEach(p => {
-        if (hitProjectiles.has(p)) return;
-        
-        const nearbyEnemies = spatialGrid.current.queryNearby(p);
-        for (const e of nearbyEnemies) {
-            if (e.constructor.name !== 'Object' || !e.char || enemiesHitThisFrame.has(e.id)) continue;
-            
+    const enemyBuffer = collisionBuffersRef.current.enemies;
+    const projectileCountForEnemies = state.projectiles.length;
+    for (let i = 0; i < projectileCountForEnemies; i++) {
+        const p = state.projectiles[i];
+        if (hitProjectiles.has(p)) continue;
+
+        const nearbyEnemies = spatialGrid.current.queryNearby(p, enemyBuffer);
+        for (let j = 0; j < nearbyEnemies.length; j++) {
+            const e = nearbyEnemies[j] as Enemy;
+            if (!e || !e.char || enemiesHitThisFrame.has(e.id)) continue;
+
             // AABB collision check
             if (p.x < e.x + e.width && p.x + p.width > e.x && p.y < e.y + e.height && p.y + p.height > e.y) {
                 hitProjectiles.add(p);
                 e.hp!--;
                 e.isFlashing = true;
                 e.flashEndTime = Date.now() + 100;
-                
+
                 // Ricochet bounce trigger: when bullet has remaining bounces
                 if ((p.remainingBounces || 0) > 0) {
                     const impactX = p.x + p.width / 2;
                     const impactY = p.y + p.height / 2;
                     const target = findNearestEnemy(impactX, impactY, e.id);
                     if (target) {
-                        // calculate steering toward target
                         const tx = target.x + target.width / 2;
                         const ty = target.y + target.height / 2;
                         const dx = tx - impactX;
@@ -1747,19 +1896,18 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                         const nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
                         const vx = (dx / mag) * nextSpeed;
                         const vy = (dy / mag) * nextSpeed; // positive is downward
-                        const rot = Math.atan2(vy, vx) * 180 / Math.PI;
-                        state.projectiles.push({
-                            id: generateId(),
-                            x: impactX - RICOCHET_DIAMETER / 2,
-                            y: impactY - RICOCHET_DIAMETER / 2,
-                            width: RICOCHET_DIAMETER,
-                            height: RICOCHET_DIAMETER,
-                            speedX: vx,
-                            // convert to internal sign convention (y -= speedY*dt)
-                            speedY: -vy,
-                            hasBounced: true,
-                            remainingBounces: (p.remainingBounces || 0) - 1,
-                        });
+                        const bounce = projectilePool.current.get();
+                        bounce.id = generateId();
+                        bounce.x = impactX - RICOCHET_DIAMETER / 2;
+                        bounce.y = impactY - RICOCHET_DIAMETER / 2;
+                        bounce.width = RICOCHET_DIAMETER;
+                        bounce.height = RICOCHET_DIAMETER;
+                        bounce.speedX = vx;
+                        bounce.speedY = -vy; // convert to internal sign convention (y -= speedY*dt)
+                        bounce.isRicochetPrimary = false;
+                        bounce.hasBounced = true;
+                        bounce.remainingBounces = (p.remainingBounces || 0) - 1;
+                        state.projectiles.push(bounce);
                     }
                 }
 
@@ -1767,7 +1915,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     enemiesHitThisFrame.add(e.id);
                     state.score += (e.isElite || e.isBig ? 75 : 10);
                     state.enemiesDefeated++;
-                    
+
                     const explosion = explosionPool.current.get();
                     explosion.id = generateId();
                     explosion.x = e.x + e.width / 2;
@@ -1779,26 +1927,36 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                 break;
             }
         }
-    });
+    }
     
     // Remove hit projectiles
-    state.projectiles = state.projectiles.filter(p => !hitProjectiles.has(p));
+    filterInPlace(state.projectiles, (p) => !hitProjectiles.has(p), (p) => {
+      projectilePool.current.release(p);
+    });
     
     // Remove destroyed enemies
-    state.enemies = state.enemies.filter(e => !enemiesHitThisFrame.has(e.id));
+    if (enemiesHitThisFrame.size > 0) {
+      filterInPlace(state.enemies, (enemy) => !enemiesHitThisFrame.has(enemy.id));
+    }
 
     // Laser vs Enemies
     if (state.isLaserActive) {
         const laserX = state.playerX + PLAYER_WIDTH / 2;
         const laserLine = { p1: {x: laserX, y: 0}, p2: {x: laserX, y: state.playerY} };
-        state.enemies = state.enemies.filter(e => {
-            const enemyRect = { x: e.x, y: e.y, width: e.width, height: e.height };
-            if (lineIntersectsRect(laserLine, enemyRect)) {
-                state.score += 5;
-                state.explosions.push({ id: generateId(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
-                return false; // Enemy destroyed
-            }
-            return true;
+        filterInPlace(state.enemies, (enemy) => {
+          const enemyRect = { x: enemy.x, y: enemy.y, width: enemy.width, height: enemy.height };
+          if (lineIntersectsRect(laserLine, enemyRect)) {
+            state.score += 5;
+            const explosion = explosionPool.current.get();
+            explosion.id = generateId();
+            explosion.x = enemy.x + enemy.width / 2;
+            explosion.y = enemy.y + enemy.height / 2;
+            explosion.size = 'small';
+            explosion.createdAt = Date.now();
+            state.explosions.push(explosion);
+            return false; // Enemy destroyed
+          }
+          return true;
         });
     }
 
@@ -1829,18 +1987,32 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
         state.lives--;
         playShipHitSound();
-        state.explosions.push({ id: generateId(), x: state.playerX + PLAYER_WIDTH/2, y: state.playerY + PLAYER_HEIGHT/2, size: 'large', createdAt: Date.now() });
+        const playerExplosion = explosionPool.current.get();
+        playerExplosion.id = generateId();
+        playerExplosion.x = state.playerX + PLAYER_WIDTH / 2;
+        playerExplosion.y = state.playerY + PLAYER_HEIGHT / 2;
+        playerExplosion.size = 'large';
+        playerExplosion.createdAt = Date.now();
+        state.explosions.push(playerExplosion);
         
         // Activate bomb effect when player is destroyed (clear all on-screen enemies)
         playBombSound();
         const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
         onScreenEnemies.forEach(e => {
-            state.explosions.push({ id: generateId(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: 'small', createdAt: Date.now() });
+            const explosion = explosionPool.current.get();
+            explosion.id = generateId();
+            explosion.x = e.x + e.width / 2;
+            explosion.y = e.y + e.height / 2;
+            explosion.size = 'small';
+            explosion.createdAt = Date.now();
+            state.explosions.push(explosion);
             state.score += (e.isElite || e.isBig ? 75 : 10);
             state.enemiesDefeated++;
         });
         const onScreenEnemyIds = new Set(onScreenEnemies.map(e => e.id));
-        state.enemies = state.enemies.filter(e => !onScreenEnemyIds.has(e.id));
+        if (onScreenEnemyIds.size > 0) {
+          filterInPlace(state.enemies, (enemy) => !onScreenEnemyIds.has(enemy.id));
+        }
         
         if (state.lives === 1 && !state.stockedItem) {
             state.stockedItem = Math.random() > 0.5 ? 'BOMB' : 'LASER_BEAM';
@@ -1861,66 +2033,74 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
     
     // Enemy Projectiles vs Player
-    state.enemyProjectiles = state.enemyProjectiles.filter(p => {
-        if (p.x < playerHitbox.x + playerHitbox.width && p.x + p.width > playerHitbox.x && p.y < playerHitbox.y + playerHitbox.height && p.y + p.height > playerHitbox.y) {
-            if (state.isPhaseShieldActive) {
-                // With Canceller, reflect the projectile back
-                if (state.hasCancellerShot) {
-                    const proj = projectilePool.current.get();
-                    proj.id = generateId();
-                    proj.x = state.playerX + PLAYER_WIDTH / 2 - PROJECTILE_WIDTH / 2;
-                    proj.y = state.playerY;
-                    proj.width = PROJECTILE_WIDTH;
-                    proj.height = PROJECTILE_HEIGHT;
-                    proj.speedX = -(p.speedX);
-                    // Ensure upward travel; if incoming was upward, invert to downward then upward min speed
-                    const baseUp = Math.max(INITIAL_PROJECTILE_SPEED_PER_SECOND * 0.7, -p.speedY);
-                    proj.speedY = baseUp;
-                    state.projectiles.push(proj);
-                    playCancelSound();
-                }
-                return false; // absorbed by shield
-            } else {
-                takeHit();
-                return false;
-            }
+    filterInPlace(state.enemyProjectiles, (p) => {
+      if (p.x < playerHitbox.x + playerHitbox.width && p.x + p.width > playerHitbox.x && p.y < playerHitbox.y + playerHitbox.height && p.y + p.height > playerHitbox.y) {
+        if (state.isPhaseShieldActive) {
+          // With Canceller, reflect the projectile back
+          if (state.hasCancellerShot) {
+            const proj = projectilePool.current.get();
+            proj.id = generateId();
+            proj.x = state.playerX + PLAYER_WIDTH / 2 - PROJECTILE_WIDTH / 2;
+            proj.y = state.playerY;
+            proj.width = PROJECTILE_WIDTH;
+            proj.height = PROJECTILE_HEIGHT;
+            proj.speedX = -(p.speedX);
+            // Ensure upward travel; if incoming was upward, invert to downward then upward min speed
+            const baseUp = Math.max(INITIAL_PROJECTILE_SPEED_PER_SECOND * 0.7, -p.speedY);
+            proj.speedY = baseUp;
+            proj.isRicochetPrimary = false;
+            proj.hasBounced = false;
+            proj.remainingBounces = 0;
+            state.projectiles.push(proj);
+            playCancelSound();
+          }
+        } else {
+          takeHit();
         }
-        return true;
+        return false; // absorbed or hit player
+      }
+      return true;
+    }, (p) => {
+      enemyProjectilePool.current.release(p);
     });
 
     // Enemy Lasers vs Player
-    state.enemies.forEach(e => {
+    for (let i = 0; i < state.enemies.length; i++) {
+        const e = state.enemies[i];
         if (e.eliteType === 'LASER' && e.laserState === 'FIRING' && e.laserTarget) {
-            const laserLine = { p1: {x: e.x + e.width / 2, y: e.y + e.height}, p2: {x: e.laserTarget.x, y: e.laserTarget.y} };
+            const laserLine = { p1: { x: e.x + e.width / 2, y: e.y + e.height }, p2: { x: e.laserTarget.x, y: e.laserTarget.y } };
             if (lineIntersectsRect(laserLine, playerHitbox)) {
                 takeHit();
             }
         }
-    });
+    }
 
     // Mines vs Player
-    state.mines = state.mines.filter(m => {
-        if (m.x < playerHitbox.x + playerHitbox.width && m.x + m.width > playerHitbox.x && m.y < playerHitbox.y + playerHitbox.height && m.y + m.height > playerHitbox.y) {
-            takeHit();
-            return false;
-        }
-        return true;
+    filterInPlace(state.mines, (m) => {
+      if (m.x < playerHitbox.x + playerHitbox.width && m.x + m.width > playerHitbox.x && m.y < playerHitbox.y + playerHitbox.height && m.y + m.height > playerHitbox.y) {
+        takeHit();
+        return false;
+      }
+      return true;
     });
 
     // Player Projectiles vs Enemy Projectiles (Canceller Shot) - optimized
     if (state.hasCancellerShot) {
-        const playerProjsToRemove: Projectile[] = [];
-        const enemyProjsToRemove: EnemyProjectile[] = [];
+        const playerProjsToRemove = new Set<Projectile>();
+        const enemyProjsToRemove = new Set<EnemyProjectile>();
         
-        state.projectiles.forEach(playerP => {
-            if (playerProjsToRemove.includes(playerP)) return;
-            
-            const nearbyEnemyProj = spatialGrid.current.queryNearby(playerP);
-            for (const enemyP of nearbyEnemyProj) {
-                if (!enemyP.attackPattern || enemyProjsToRemove.includes(enemyP)) continue;
-                
+        const enemyProjectileBuffer = collisionBuffersRef.current.enemyProjectiles;
+        const projectileCountForCanceller = state.projectiles.length;
+        for (let i = 0; i < projectileCountForCanceller; i++) {
+            const playerP = state.projectiles[i];
+            if (playerProjsToRemove.has(playerP)) continue;
+
+            const nearbyEnemyProj = spatialGrid.current.queryNearby(playerP, enemyProjectileBuffer);
+            for (let j = 0; j < nearbyEnemyProj.length; j++) {
+                const enemyP = nearbyEnemyProj[j] as EnemyProjectile;
+                if (!enemyP || !enemyP.attackPattern || enemyProjsToRemove.has(enemyP)) continue;
+
                 if (playerP.x < enemyP.x + enemyP.width && playerP.x + playerP.width > enemyP.x && playerP.y < enemyP.y + enemyP.height && playerP.y + playerP.height > enemyP.y) {
-                    // If this bullet still has ricochets remaining, trigger a bounce on cancel
                     if ((playerP.remainingBounces || 0) > 0) {
                         const impactX = playerP.x + playerP.width / 2;
                         const impactY = playerP.y + playerP.height / 2;
@@ -1935,52 +2115,60 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                             const nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
                             const vx = (dx / mag) * nextSpeed;
                             const vy = (dy / mag) * nextSpeed;
-                            const rot = Math.atan2(vy, vx) * 180 / Math.PI;
-                            state.projectiles.push({
-                                id: generateId(),
-                                x: impactX - RICOCHET_DIAMETER / 2,
-                                y: impactY - RICOCHET_DIAMETER / 2,
-                                width: RICOCHET_DIAMETER,
-                                height: RICOCHET_DIAMETER,
-                                speedX: vx,
-                                speedY: -vy,
-                                hasBounced: true,
-                                remainingBounces: (playerP.remainingBounces || 0) - 1,
-                            });
+                            const ricochet = projectilePool.current.get();
+                            ricochet.id = generateId();
+                            ricochet.x = impactX - RICOCHET_DIAMETER / 2;
+                            ricochet.y = impactY - RICOCHET_DIAMETER / 2;
+                            ricochet.width = RICOCHET_DIAMETER;
+                            ricochet.height = RICOCHET_DIAMETER;
+                            ricochet.speedX = vx;
+                            ricochet.speedY = -vy;
+                            ricochet.isRicochetPrimary = false;
+                            ricochet.hasBounced = true;
+                            ricochet.remainingBounces = (playerP.remainingBounces || 0) - 1;
+                            state.projectiles.push(ricochet);
                         }
                     }
-                    playerProjsToRemove.push(playerP);
-                    enemyProjsToRemove.push(enemyP);
+                    playerProjsToRemove.add(playerP);
+                    enemyProjsToRemove.add(enemyP);
                     break;
                 }
             }
-        });
+        }
         
-        // Remove collided projectiles
-        state.projectiles = state.projectiles.filter(p => !playerProjsToRemove.includes(p));
-        state.enemyProjectiles = state.enemyProjectiles.filter(p => !enemyProjsToRemove.includes(p));
-        
-        // Projectiles removed above
+        if (playerProjsToRemove.size > 0) {
+          filterInPlace(state.projectiles, (p) => !playerProjsToRemove.has(p), (p) => {
+            projectilePool.current.release(p);
+          });
+        }
+        if (enemyProjsToRemove.size > 0) {
+          filterInPlace(state.enemyProjectiles, (p) => !enemyProjsToRemove.has(p), (p) => {
+            enemyProjectilePool.current.release(p);
+          });
+        }
     }
 
     // Player Projectiles vs Mines (optimized)
-    const mineProjsToRemove: Projectile[] = [];
-    const minesToRemove: Mine[] = [];
+    const mineProjsToRemove = new Set<Projectile>();
+    const minesToRemove = new Set<Mine>();
     
-    state.projectiles.forEach(p => {
-        if (mineProjsToRemove.includes(p)) return;
-        
-        const nearbyMines = spatialGrid.current.queryNearby(p);
-        for (const m of nearbyMines) {
-            if (!m.createdAt || minesToRemove.includes(m)) continue;
-            
+    const mineBuffer = collisionBuffersRef.current.mines;
+    const projectileCountForMines = state.projectiles.length;
+    for (let i = 0; i < projectileCountForMines; i++) {
+        const p = state.projectiles[i];
+        if (mineProjsToRemove.has(p)) continue;
+
+        const nearbyMines = spatialGrid.current.queryNearby(p, mineBuffer);
+        for (let j = 0; j < nearbyMines.length; j++) {
+            const m = nearbyMines[j] as Mine;
+            if (!m || m.createdAt === undefined || minesToRemove.has(m)) continue;
+
             if (p.x < m.x + m.width && p.x + p.width > m.x && p.y < m.y + m.height && p.y + p.height > m.y) {
-                mineProjsToRemove.push(p);
-                minesToRemove.push(m);
-                
-                // Explode mine into burst using pool
-                for (let i = 0; i < 5; i++) {
-                    const angle = (i * Math.PI * 2 / 5) - (Math.PI / 2);
+                mineProjsToRemove.add(p);
+                minesToRemove.add(m);
+
+                for (let k = 0; k < 5; k++) {
+                    const angle = (k * Math.PI * 2 / 5) - (Math.PI / 2);
                     const burstProj = enemyProjectilePool.current.get();
                     burstProj.id = generateId();
                     burstProj.x = m.x;
@@ -1992,49 +2180,61 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
                     burstProj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 0.8;
                     state.enemyProjectiles.push(burstProj);
                 }
-                
+
                 const explosion = explosionPool.current.get();
                 explosion.id = generateId();
-                explosion.x = m.x + m.width/2;
-                explosion.y = m.y + m.height/2;
+                explosion.x = m.x + m.width / 2;
+                explosion.y = m.y + m.height / 2;
                 explosion.size = 'small';
                 explosion.createdAt = Date.now();
                 state.explosions.push(explosion);
                 break;
             }
         }
-    });
-    
-    state.projectiles = state.projectiles.filter(p => !mineProjsToRemove.includes(p));
-    state.mines = state.mines.filter(m => !minesToRemove.includes(m));
-    projectilePool.current.releaseAll(mineProjsToRemove);
+    }
+
+    if (mineProjsToRemove.size > 0) {
+      filterInPlace(state.projectiles, (p) => !mineProjsToRemove.has(p), (p) => {
+        projectilePool.current.release(p);
+      });
+    }
+    if (minesToRemove.size > 0) {
+      filterInPlace(state.mines, (m) => !minesToRemove.has(m));
+    }
     
     // Enemies vs Player
-    state.enemies.forEach(e => {
+    for (let i = 0; i < state.enemies.length; i++) {
+        const e = state.enemies[i];
         if (e.x < playerHitbox.x + playerHitbox.width && e.x + e.width > playerHitbox.x && e.y < playerHitbox.y + playerHitbox.height && e.y + e.height > playerHitbox.y) {
             if (state.isPhaseShieldActive) {
                 const scored = (e.isElite || e.isBig) ? 75 : 10;
                 state.score += scored;
                 state.enemiesDefeated++;
-                state.explosions.push({ id: generateId(), x: e.x + e.width / 2, y: e.y + e.height / 2, size: e.isElite || e.isBig ? 'large' : 'small', createdAt: Date.now() });
+                const explosion = explosionPool.current.get();
+                explosion.id = generateId();
+                explosion.x = e.x + e.width / 2;
+                explosion.y = e.y + e.height / 2;
+                explosion.size = e.isElite || e.isBig ? 'large' : 'small';
+                explosion.createdAt = Date.now();
+                state.explosions.push(explosion);
                 enemiesHitThisFrame.add(e.id);
             } else {
                 takeHit();
             }
         }
-    });
+    }
     // Remove enemies destroyed by shield contact in this frame
     if (enemiesHitThisFrame.size > 0) {
-        state.enemies = state.enemies.filter(e => !enemiesHitThisFrame.has(e.id));
+        filterInPlace(state.enemies, (enemy) => !enemiesHitThisFrame.has(enemy.id));
     }
     
     // Items vs Player
-    state.items = state.items.filter(item => {
-        if (item.x < playerHitbox.x + playerHitbox.width && item.x + item.width > playerHitbox.x && item.y < playerHitbox.y + playerHitbox.height && item.y + item.height > playerHitbox.y) {
-            handleItemCollection(item);
-            return false;
-        }
-        return true;
+    filterInPlace(state.items, (item) => {
+      if (item.x < playerHitbox.x + playerHitbox.width && item.x + item.width > playerHitbox.x && item.y < playerHitbox.y + playerHitbox.height && item.y + item.height > playerHitbox.y) {
+        handleItemCollection(item);
+        return false;
+      }
+      return true;
     });
 
     // Item Spawning
@@ -2157,7 +2357,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     };
   }, [gameLoop, setupAudio, activateSpecialItem, handleSkip]);
   
-  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, isPhaseShieldActive, stockedItemActiveUntil, laserEndTime, phaseShieldEndTime, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate, showGameOverText } = gameStateRef.current;
+  const { playerX, playerY, projectiles, enemies, items, isInvincible, isRespawning, stockedItem, isLaserActive, isPhaseShieldActive, stockedItemActiveUntil, laserEndTime, phaseShieldEndTime, enemyProjectiles, lives, score, enemiesDefeated, itemsCollected, explosions, mines, floatingTexts, shouldHidePlayer, currentEnemySpawnRate, showGameOverText, fps } = gameStateRef.current;
   const isLastStand = lives === 1;
 
   const renderGuideLine = (start: { x: number; y: number }, end: { x: number; y: number }, key: string, thickness = 2, opacity = 0.45) => {
@@ -2328,6 +2528,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
         onError={(e) => console.error("Audio load error:", e)}
         onCanPlay={() => console.log("Audio can play")}
       />
+
+      <div className="absolute bottom-2 right-2 px-2 py-1 rounded bg-black bg-opacity-60 text-lime-300 text-xs font-mono z-40">
+        FPS {fps > 0 ? fps : '--'}
+      </div>
       
       {/* Game Objects */}
       {!isRespawning && !shouldHidePlayer && <PlayerComponent x={playerX} y={playerY} isInvincible={isInvincible} isLastStand={isLastStand} hasPhaseShield={isPhaseShieldActive} />}

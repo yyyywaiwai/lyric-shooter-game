@@ -119,8 +119,8 @@ function filterInPlace<T>(array: T[], predicate: (value: T, index: number) => bo
   array.length = writeIndex;
 }
 
-const GAME_WIDTH = 800;
-const GAME_HEIGHT = 600;
+const GAME_WIDTH = 1024;
+const GAME_HEIGHT = 720;
 const PLAYER_WIDTH = 36;
 const PLAYER_HEIGHT = 36;
 const PLAYER_SPEED_PER_SECOND = 420;

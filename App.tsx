@@ -5,6 +5,32 @@ import FileUploader from './components/FileUploader';
 import GameScreen from './components/GameScreen';
 import { BombIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, SpeedUpIcon, SideShotIcon, CancellerShotIcon, RicochetShotIcon, PhaseShieldIcon } from './components/icons';
 
+const NON_DESKTOP_TERMS = [
+  'android',
+  'iphone',
+  'ipad',
+  'ipod',
+  'windows phone',
+  'mobile',
+  'tablet',
+  'webos',
+  'blackberry',
+  'bb10',
+  'playbook',
+  'silk',
+  'kindle',
+  'opera mini',
+  'opera mobi'
+];
+
+const detectDesktop = (): boolean => {
+  if (typeof navigator === 'undefined') return true;
+  const ua = (navigator.userAgent || '').toLowerCase();
+  const isTouchMac = ua.includes('macintosh') && navigator.maxTouchPoints > 1;
+  const isNonDesktopByUa = NON_DESKTOP_TERMS.some(term => ua.includes(term));
+  return !(isNonDesktopByUa || isTouchMac);
+};
+
 const InfoPanel = () => (
     <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 max-w-4xl mx-auto p-4 bg-slate-800 bg-opacity-70 rounded-lg text-left">
         <div>
@@ -193,6 +219,7 @@ const ItemSelection = ({ onSelect }: { onSelect: (item: ItemType) => void }) => 
 };
 
 export default function App(): React.ReactNode {
+  const [isDesktop, setIsDesktop] = useState<boolean>(() => detectDesktop());
   const [gameStatus, setGameStatus] = useState<GameStatus>('loading');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
@@ -206,6 +233,14 @@ export default function App(): React.ReactNode {
     setLyrics(lyrics);
     setMetadata(metadata);
     setGameStatus('ready');
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleDeviceChange = () => setIsDesktop(detectDesktop());
+    handleDeviceChange();
+    window.addEventListener('resize', handleDeviceChange);
+    return () => window.removeEventListener('resize', handleDeviceChange);
   }, []);
 
   useEffect(() => {
@@ -346,6 +381,20 @@ export default function App(): React.ReactNode {
         return null;
     }
   };
+
+  if (!isDesktop) {
+    return (
+      <main className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center text-white bg-black bg-opacity-70 p-8 rounded-2xl space-y-4">
+          <h1 className="text-3xl font-orbitron text-sky-300">Desktop Only</h1>
+          <p className="text-slate-200 leading-relaxed">
+            This game relies on keyboard controls and mouse precision. Please come back on a desktop computer to play.
+          </p>
+          <p className="text-slate-400 text-sm">Touch devices are not supported at this time.</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-900 flex items-center justify-center p-4">

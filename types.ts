@@ -3,12 +3,15 @@ export interface LyricLine {
   text: string;
 }
 
+export type EntityType = 'enemy' | 'playerProjectile' | 'enemyProjectile' | 'item' | 'mine';
+
 export interface GameObject {
   id: number;
   x: number;
   y: number;
   width: number;
   height: number;
+  entityType: EntityType;
   __gridMark?: number;
 }
 

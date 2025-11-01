@@ -1,8 +1,13 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { LyricLine, Enemy, Projectile, Item, MovementPattern, ItemType, SpecialWeapon, EnemyProjectile, ShooterAttackPattern, Explosion, GameStats, EliteShooterType, Mine, FloatingText } from '../types';
+import { LyricLine, Enemy, Projectile, Item, ItemType, SpecialWeapon, EnemyProjectile, Explosion, GameStats, EliteShooterType, Mine, FloatingText } from '@/types';
 import { BombIcon, SpeedUpIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, PlayerShipIcon, SideShotIcon, CancellerShotIcon, RicochetShotIcon, PhaseShieldIcon } from './icons';
 import ProgressCircle from './ProgressCircle';
+import GameConstants from '@/services/gameConstants';
+import EnemyManager from '@/services/enemyManager';
+import ProjectileManager from '@/services/projectileManager';
+import ItemManager from '@/services/itemManager';
+import { filterInPlace } from '@/services/collectionUtils';
 
 // Object pools for performance
 class ObjectPool<T> {
@@ -119,60 +124,36 @@ function filterInPlace<T>(array: T[], predicate: (value: T, index: number) => bo
   array.length = writeIndex;
 }
 
-const GAME_WIDTH = 1024;
-const GAME_HEIGHT = 720;
-const PLAYER_WIDTH = 36;
-const PLAYER_HEIGHT = 36;
-const PLAYER_SPEED_PER_SECOND = 420;
-const INITIAL_PROJECTILE_SPEED_PER_SECOND = 1080;
-const PROJECTILE_WIDTH = 6;
-const PROJECTILE_HEIGHT = 20;
-const PROJECTILE_HITBOX_PADDING = 8;
-const ENEMY_WIDTH = 36;
-const ENEMY_HEIGHT = 36;
-const ITEM_WIDTH = 32;
-const ITEM_HEIGHT = 32;
-const ENEMY_SPEED_PER_SECOND = 48;
-const ENEMY_PROJECTILE_SPEED_PER_SECOND = 240;
-const ENEMY_ACCELERATION_PER_SECOND_SQUARED = 28.8;
-const INITIAL_ENEMY_FIRE_CHANCE = 0.05;
-const ENEMY_FIRE_COOLDOWN = 2000;
-const FIRE_COOLDOWN = 150;
-const ITEM_SPAWN_PERCENTAGE = 0.10; // 10%
-const INITIAL_LIVES = 5;
-const RESPAWN_DURATION = 1500;
-const INVINCIBILITY_DURATION = 3000;
-const CANCELLER_INVINCIBILITY_DURATION = 500; // 0.5 seconds for canceller shot
-const LASER_DURATION = 5000;
-const EXPLOSION_DURATION = 400;
-const BGM_VOLUME = 0.3;
-const DUCKED_BGM_VOLUME = 0.05;
-const SKIP_LONG_PRESS_DURATION = 500; // ms
-const MINE_WIDTH = 22;
-const MINE_HEIGHT = 22;
-const MINE_LIFETIME = 9000; // 9 seconds
-const FLOATING_TEXT_DURATION = 1000;
-const RICOCHET_SPEED_FACTOR = 0.3; // 70% slower after each bounce (disabled during Last Stand)
-const MIN_RICOCHET_SPEED = 240;
-const RICOCHET_DIAMETER = 10; // visual/collision size for bounced bullets
-const PHASE_SHIELD_DURATION = 3000; // ms
-const BEAT_SPEED_MIN_INTERVAL = 2000;
-const BEAT_SPEED_MAX_INTERVAL = 8000;
-const BEAT_MAX_SPEED_MULTIPLIER = 3;
-const BEAT_TARGET_OFFSET = PLAYER_WIDTH;
-const DECELERATE_INITIAL_MULTIPLIER = 2;
-const DECELERATE_FINAL_MULTIPLIER = 0.4;
-const CIRCLE_TRIGGER_RADIUS = 120;
-const CIRCLE_ORBIT_LOOPS = 1;
-const CIRCLE_ORBIT_ANGULAR_SPEED = Math.PI; // radians per second
-const CIRCLE_MIN_ORBIT_RADIUS = 40;
-const CIRCLE_GUIDE_DURATION = 400; // ms
-const CIRCLE_GUIDE_SEGMENTS = 24;
-const MAX_SPAWNS_PER_FRAME = 6;
-const MOVEMENT_PATTERNS: MovementPattern[] = ['STRAIGHT_DOWN', 'SINE_WAVE', 'ZIG_ZAG', 'DRIFTING', 'ACCELERATING'];
-const NORMAL_SHOOTER_PATTERNS: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL', 'BEAT', 'SIDE', 'DECELERATE'];
-const LEGACY_SHOOTER_PATTERNS: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL'];
-const ELITE_TYPES: EliteShooterType[] = ['MAGIC', 'GATLING', 'LANDMINE', 'LASER', 'CIRCLE'];
+const {
+  GAME_WIDTH,
+  GAME_HEIGHT,
+  PLAYER_WIDTH,
+  PLAYER_HEIGHT,
+  PLAYER_SPEED_PER_SECOND,
+  PROJECTILE_WIDTH,
+  PROJECTILE_HEIGHT,
+  ENEMY_HEIGHT,
+  ENEMY_PROJECTILE_SPEED_PER_SECOND,
+  INITIAL_ENEMY_FIRE_CHANCE,
+  FIRE_COOLDOWN,
+  ITEM_SPAWN_PERCENTAGE,
+  INITIAL_LIVES,
+  RESPAWN_DURATION,
+  INVINCIBILITY_DURATION,
+  CANCELLER_INVINCIBILITY_DURATION,
+  LASER_DURATION,
+  EXPLOSION_DURATION,
+  BGM_VOLUME,
+  DUCKED_BGM_VOLUME,
+  SKIP_LONG_PRESS_DURATION,
+  MINE_LIFETIME,
+  FLOATING_TEXT_DURATION,
+  PHASE_SHIELD_DURATION,
+  CIRCLE_ORBIT_LOOPS,
+  CIRCLE_GUIDE_DURATION,
+  CIRCLE_GUIDE_SEGMENTS,
+  MAX_SPAWNS_PER_FRAME,
+} = GameConstants.getInstance();
 
 interface GameScreenProps {
   audioUrl: string;
@@ -181,28 +162,6 @@ interface GameScreenProps {
   superHardMode?: boolean;
   initialItem?: ItemType;
 }
-
-// --- Helper Functions ---
-const lineIntersectsRect = (line: {p1: {x:number, y:number}, p2: {x:number, y:number}}, rect: {x:number, y:number, width:number, height:number}) => {
-    const lineLineIntersection = (p1: {x:number, y:number}, p2: {x:number, y:number}, p3: {x:number, y:number}, p4: {x:number, y:number}) => {
-        const den = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
-        if (den === 0) return false;
-        const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / den;
-        const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / den;
-        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
-    };
-
-    const { x, y, width, height } = rect;
-    const { p1, p2 } = line;
-
-    const left = lineLineIntersection(p1, p2, {x, y}, {x, y: y + height});
-    const right = lineLineIntersection(p1, p2, {x: x + width, y}, {x: x + width, y: y + height});
-    const top = lineLineIntersection(p1, p2, {x, y}, {x: x + width, y});
-    const bottom = lineLineIntersection(p1, p2, {x, y: y + height}, {x: x + width, y: y + height});
-
-    return left || right || top || bottom;
-};
-
 
 // Pre-rendered enemy color styles
 const ENEMY_COLORS = {
@@ -405,6 +364,10 @@ const FloatingTextComponent = React.memo(({ text, x, y, createdAt }: FloatingTex
 
 // --- Main Game Screen Component ---
 export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode = false, initialItem }: GameScreenProps): React.ReactNode {
+  const enemyManager = useMemo(() => EnemyManager.getInstance(), []);
+  const projectileManager = useMemo(() => ProjectileManager.getInstance(), []);
+  const itemManager = useMemo(() => ItemManager.getInstance(), []);
+
   // Unique ID generator for projectiles
   const nextId = useRef(1);
   const generateId = useCallback(() => {
@@ -413,7 +376,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
 
   // Object pools for performance
   const projectilePool = useRef(new ObjectPool<Projectile>(
-    () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0, speedX: 0 }),
+    () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0, speedX: 0, entityType: 'playerProjectile' }),
     (obj) => {
       obj.id = 0;
       obj.x = 0;
@@ -422,6 +385,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       obj.height = PROJECTILE_HEIGHT;
       obj.speedY = 0;
       obj.speedX = 0;
+      obj.entityType = 'playerProjectile';
       obj.isRicochetPrimary = undefined;
       obj.hasBounced = undefined;
       obj.remainingBounces = undefined;
@@ -430,7 +394,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
   ));
   
   const enemyProjectilePool = useRef(new ObjectPool<EnemyProjectile>(
-    () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN' }),
+    () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN', entityType: 'enemyProjectile' }),
     (obj) => {
       obj.id = 0;
       obj.x = 0;
@@ -439,6 +403,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       obj.height = 8;
       obj.speedX = 0;
       obj.speedY = 0;
+      obj.entityType = 'enemyProjectile';
       obj.attackPattern = 'STRAIGHT_DOWN';
       obj.isDelayed = false;
       obj.delayEndTime = undefined;
@@ -683,6 +648,29 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       oscillator.stop(audioContext.currentTime + 0.2);
   }, []);
 
+  enemyManager.initialize({
+    state: gameStateRef.current,
+    generateId,
+    superHardMode,
+    enemyProjectilePool: enemyProjectilePool.current,
+    explosionPool: explosionPool.current,
+  });
+  projectileManager.initialize({
+    state: gameStateRef.current,
+    generateId,
+    projectilePool: projectilePool.current,
+    enemyProjectilePool: enemyProjectilePool.current,
+    explosionPool: explosionPool.current,
+    enemyManager,
+    playCancelSound,
+  });
+  itemManager.initialize({
+    state: gameStateRef.current,
+    generateId,
+    playCancelSound,
+    superHardMode,
+  });
+
   const fadeOutBgm = useCallback((duration: number) => {
       const gainNode = bgmGainRef.current;
       const context = audioContextRef.current;
@@ -803,88 +791,6 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     const state = gameStateRef.current;
     const isLastStand = state.lives === 1;
 
-    const spawnEnemyFromChar = (char: string, progress: number) => {
-      const movementPattern = MOVEMENT_PATTERNS[Math.floor(Math.random() * MOVEMENT_PATTERNS.length)];
-
-      let shooterChance = state.baseShooterChance;
-      if (progress > 0.75) shooterChance += 0.15;
-      else if (progress > 0.50) shooterChance += 0.10;
-      else if (progress > 0.25) shooterChance += 0.05;
-
-      let attackPattern: ShooterAttackPattern | undefined;
-      const isShooter = Math.random() < shooterChance;
-      if (isShooter) {
-        attackPattern = NORMAL_SHOOTER_PATTERNS[Math.floor(Math.random() * NORMAL_SHOOTER_PATTERNS.length)];
-      }
-
-      let isElite = false;
-      let eliteType: EliteShooterType | undefined;
-      const eliteShooterProgressThreshold = superHardMode ? 0 : 0.5;
-      const eliteShooterChance = superHardMode ? 0.20 : 0.15;
-
-      if (isShooter && progress >= eliteShooterProgressThreshold && Math.random() < eliteShooterChance) {
-        isElite = true;
-        eliteType = ELITE_TYPES[Math.floor(Math.random() * ELITE_TYPES.length)];
-        attackPattern = LEGACY_SHOOTER_PATTERNS[Math.floor(Math.random() * LEGACY_SHOOTER_PATTERNS.length)];
-        if (eliteType === 'CIRCLE') {
-          attackPattern = 'CIRCLE';
-        }
-      }
-
-      const enemy: Enemy = {
-        id: generateId(),
-        char,
-        x: Math.random() * (GAME_WIDTH - ENEMY_WIDTH),
-        y: -ENEMY_HEIGHT,
-        width: ENEMY_WIDTH,
-        height: ENEMY_HEIGHT,
-        speedY: ENEMY_SPEED_PER_SECOND,
-        movementPattern,
-        isShooter,
-        attackPattern: isShooter ? attackPattern : undefined,
-        isElite,
-        eliteType,
-        hp: isElite ? 3 : 1,
-        isFlashing: false,
-        isBig: superHardMode && state.isMidGameBuffActive && !isElite && isShooter,
-      };
-
-      if (enemy.isBig) enemy.hp = 3;
-
-      switch (movementPattern) {
-        case 'SINE_WAVE':
-          enemy.initialX = enemy.x;
-          enemy.amplitude = 50 + Math.random() * 100;
-          enemy.frequency = (0.005 + Math.random() * 0.005) * (Math.random() > 0.5 ? 1 : -1);
-          break;
-        case 'ZIG_ZAG': {
-          const lateralSpeed = (60 + Math.random() * 60) * (Math.random() > 0.5 ? 1 : -1);
-          enemy.speedX = lateralSpeed;
-          break;
-        }
-        case 'DRIFTING':
-          enemy.speedX = (30 + Math.random() * 30) * (Math.random() > 0.5 ? 1 : -1);
-          break;
-        case 'ACCELERATING':
-          enemy.accelerationY = ENEMY_ACCELERATION_PER_SECOND_SQUARED;
-          break;
-      }
-
-      if (enemy.isElite) {
-        enemy.width *= 1.5;
-        enemy.height *= 1.5;
-        if (enemy.eliteType === 'LASER') {
-          enemy.laserState = 'IDLE';
-        }
-      }
-      if (enemy.isBig) {
-        enemy.width *= 1.3;
-        enemy.height *= 1.3;
-      }
-
-      state.enemies.push(enemy);
-    };
-
     if (state.isGameEnding) return;
 
     // --- FPS Tracking ---
@@ -941,35 +847,10 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     }
 
     // --- Process Pending Enemy Spawns ---
-    if (state.pendingSpawnCursor < state.pendingSpawns.length) {
-      const nowTs = Date.now();
-      let processed = 0;
-      while (
-        state.pendingSpawnCursor < state.pendingSpawns.length &&
-        state.pendingSpawns[state.pendingSpawnCursor].time <= nowTs &&
-        processed < MAX_SPAWNS_PER_FRAME
-      ) {
-        const task = state.pendingSpawns[state.pendingSpawnCursor];
-        spawnEnemyFromChar(task.char, task.progress);
-        state.pendingSpawnCursor++;
-        processed++;
-      }
-
-      if (state.pendingSpawnCursor > 0 && (state.pendingSpawnCursor > 32 || state.pendingSpawnCursor > state.pendingSpawns.length / 2)) {
-        state.pendingSpawns.splice(0, state.pendingSpawnCursor);
-        state.pendingSpawnCursor = 0;
-      }
-    }
+    enemyManager.processPendingSpawns(MAX_SPAWNS_PER_FRAME);
 
     // --- Update Enemy Spawn Rate (every 1 second) ---
-    const spawnRateUpdateTime = Date.now();
-    if (spawnRateUpdateTime - state.lastSpawnRateUpdate >= 1000) {
-        if (state.gameStartTime > 0) {
-            const elapsedTimeSeconds = (spawnRateUpdateTime - state.gameStartTime) / 1000;
-            state.currentEnemySpawnRate = elapsedTimeSeconds > 0 ? state.totalEnemiesSpawned / elapsedTimeSeconds : 0;
-        }
-        state.lastSpawnRateUpdate = spawnRateUpdateTime;
-    }
+    enemyManager.updateSpawnRate(Date.now());
     
     // --- Player Movement ---
     if (!state.isRespawning) {
@@ -985,95 +866,19 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     }
 
     // --- Player Firing ---
-    const currentFireCooldown = FIRE_COOLDOWN;
-    
-    const canFire = !state.isRespawning && !state.isGameOverDelayed && (keysPressed.current[' '] || keysPressed.current['Spacebar']) && !state.isLaserActive && !(state.showSkip && spacebarPressStart.current > 0);
-    if (canFire && Date.now() - lastFireTime.current > currentFireCooldown) {
-        lastFireTime.current = Date.now();
-        state.mainShotCounter++;
-        const pX = state.playerX + PLAYER_WIDTH / 2 - PROJECTILE_WIDTH / 2;
-        const pY = state.playerY;
-        
-        let currentProjectileSpeed = INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier;
-        if (isLastStand) {
-            currentProjectileSpeed *= 1.3;
-        }
-
-        // Ricochet triggers every shot during Last Stand, otherwise every other shot
-        const isRicochetPrimary = state.hasRicochetShot && (isLastStand || state.mainShotCounter % 2 === 0);
-        const mainProjectile = projectilePool.current.get();
-        mainProjectile.id = generateId();
-        mainProjectile.x = pX;
-        mainProjectile.y = pY;
-        mainProjectile.width = PROJECTILE_WIDTH;
-        mainProjectile.height = PROJECTILE_HEIGHT;
-        mainProjectile.speedY = currentProjectileSpeed;
-        mainProjectile.speedX = 0;
-        mainProjectile.isRicochetPrimary = isRicochetPrimary;
-        mainProjectile.hasBounced = false;
-        mainProjectile.remainingBounces = isRicochetPrimary ? state.ricochetStacks : 0;
-        state.projectiles.push(mainProjectile);
-        
-        const diagonalInterval = isLastStand ? 2 : 3;
-        if(state.hasDiagonalShot && state.mainShotCounter % diagonalInterval === 0) {
-            const rightDiagonal = projectilePool.current.get();
-            rightDiagonal.id = generateId();
-            rightDiagonal.x = pX;
-            rightDiagonal.y = pY;
-            rightDiagonal.width = PROJECTILE_WIDTH;
-            rightDiagonal.height = PROJECTILE_HEIGHT;
-            rightDiagonal.speedY = currentProjectileSpeed;
-            rightDiagonal.speedX = currentProjectileSpeed * 0.4;
-            rightDiagonal.isRicochetPrimary = false;
-            rightDiagonal.hasBounced = false;
-            rightDiagonal.remainingBounces = 0;
-            state.projectiles.push(rightDiagonal);
-
-            const leftDiagonal = projectilePool.current.get();
-            leftDiagonal.id = generateId();
-            leftDiagonal.x = pX;
-            leftDiagonal.y = pY;
-            leftDiagonal.width = PROJECTILE_WIDTH;
-            leftDiagonal.height = PROJECTILE_HEIGHT;
-            leftDiagonal.speedY = currentProjectileSpeed;
-            leftDiagonal.speedX = -currentProjectileSpeed * 0.4;
-            leftDiagonal.isRicochetPrimary = false;
-            leftDiagonal.hasBounced = false;
-            leftDiagonal.remainingBounces = 0;
-            state.projectiles.push(leftDiagonal);
-        }
-
-        const sideInterval = isLastStand ? 1 : 2;
-        if(state.hasSideShot && state.mainShotCounter % sideInterval === 0) {
-            const sideProjectileY = state.playerY + PLAYER_HEIGHT / 2 - PROJECTILE_WIDTH / 2;
-            
-            const leftSide = projectilePool.current.get();
-            leftSide.id = generateId();
-            leftSide.x = state.playerX + PLAYER_WIDTH / 2;
-            leftSide.y = sideProjectileY;
-            leftSide.width = PROJECTILE_HEIGHT;
-            leftSide.height = PROJECTILE_WIDTH;
-            leftSide.speedY = 0;
-            leftSide.speedX = -currentProjectileSpeed;
-            leftSide.isRicochetPrimary = false;
-            leftSide.hasBounced = false;
-            leftSide.remainingBounces = 0;
-            state.projectiles.push(leftSide);
-
-            const rightSide = projectilePool.current.get();
-            rightSide.id = generateId();
-            rightSide.x = state.playerX + PLAYER_WIDTH / 2;
-            rightSide.y = sideProjectileY;
-            rightSide.width = PROJECTILE_HEIGHT;
-            rightSide.height = PROJECTILE_WIDTH;
-            rightSide.speedY = 0;
-            rightSide.speedX = currentProjectileSpeed;
-            rightSide.isRicochetPrimary = false;
-            rightSide.hasBounced = false;
-            rightSide.remainingBounces = 0;
-            state.projectiles.push(rightSide);
-        }
-    }
+    projectileManager.handlePlayerFire({
+      now: Date.now(),
+      isLastStand,
+      keysPressed: keysPressed.current,
+      lastFireTime,
+      spacebarPressStart: spacebarPressStart.current,
+      player: { x: state.playerX, y: state.playerY, width: PLAYER_WIDTH, height: PLAYER_HEIGHT },
+      isRespawning: state.isRespawning,
+      isGameOverDelayed: state.isGameOverDelayed,
+      isLaserActive: state.isLaserActive,
+      showSkip: state.showSkip,
+      fireCooldown: FIRE_COOLDOWN,
+    });
 
     // --- Timers & State Updates ---
     const currentTime = Date.now();
@@ -1127,601 +932,33 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     });
 
     // --- Object Movement (Optimized) ---
-    // Update projectiles in-place and filter out-of-bounds
-    filterInPlace(state.projectiles, (p) => {
-      p.y -= p.speedY * dt;
-      p.x += (p.speedX || 0) * dt;
-      const active = p.y > -p.height && p.y < GAME_HEIGHT && p.x > -p.width && p.x < GAME_WIDTH;
-      if (!active) {
-        projectilePool.current.release(p);
-      }
-      return active;
-    });
     
-    const currentEnemyProjectileSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
-    const fireBeatShooters = (triggerTime: number) => {
-        const baseSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
-        const playerCenterX = state.playerX + PLAYER_WIDTH / 2;
-        const playerCenterY = state.playerY + PLAYER_HEIGHT / 2;
-        const enemies = state.enemies;
-        for (let i = 0; i < enemies.length; i++) {
-            const enemy = enemies[i];
-            if (!enemy.isShooter || enemy.attackPattern !== 'BEAT') continue;
-            if (enemy.y + enemy.height < 0) continue;
-            const enemyCenterX = enemy.x + enemy.width / 2;
-            const enemyMuzzleY = enemy.y + enemy.height;
-            const lastShot = enemy.lastShotTime ?? (triggerTime - BEAT_SPEED_MIN_INTERVAL);
-            const interval = Math.max(0, triggerTime - lastShot);
-            const clampedInterval = Math.min(BEAT_SPEED_MAX_INTERVAL, Math.max(BEAT_SPEED_MIN_INTERVAL, interval));
-            const t = (clampedInterval - BEAT_SPEED_MIN_INTERVAL) / (BEAT_SPEED_MAX_INTERVAL - BEAT_SPEED_MIN_INTERVAL);
-            const speedMultiplier = 1 + t * (BEAT_MAX_SPEED_MULTIPLIER - 1);
-            const projectileSpeed = baseSpeed * speedMultiplier;
-            for (let offsetIndex = 0; offsetIndex < 2; offsetIndex++) {
-                const offset = offsetIndex === 0 ? -BEAT_TARGET_OFFSET : BEAT_TARGET_OFFSET;
-                const targetX = playerCenterX + offset;
-                const targetY = playerCenterY;
-                const dx = targetX - enemyCenterX;
-                const dy = targetY - enemyMuzzleY;
-                const distance = Math.hypot(dx, dy) || 1;
-                const proj = enemyProjectilePool.current.get();
-                proj.id = generateId();
-                proj.x = enemyCenterX;
-                proj.y = enemyMuzzleY;
-                proj.width = 8;
-                proj.height = 8;
-                proj.attackPattern = 'BEAT';
-                proj.speedX = (dx / distance) * projectileSpeed;
-                proj.speedY = (dy / distance) * projectileSpeed;
-                proj.beatTargetSide = offset < 0 ? 'LEFT' : 'RIGHT';
-                state.enemyProjectiles.push(proj);
-            }
-            enemy.lastShotTime = triggerTime;
-        }
-    };
+    projectileManager.updatePlayerProjectiles(dt);
 
+    const currentEnemyProjectileSpeed = ENEMY_PROJECTILE_SPEED_PER_SECOND * state.enemyProjectileSpeedMultiplier;
     // Update enemy projectiles
     const playerCenterX = state.playerX + PLAYER_WIDTH / 2;
     const playerCenterY = state.playerY + PLAYER_HEIGHT / 2;
-    filterInPlace(state.enemyProjectiles, (proj) => {
-      switch (proj.attackPattern) {
-        case 'DELAYED_HOMING': {
-          if (proj.isDelayed) {
-            if (currentTime > (proj.delayEndTime || 0)) {
-              proj.isDelayed = false;
-              const angle = Math.atan2(playerCenterY - proj.y, playerCenterX - proj.x);
-              proj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 1.5;
-              proj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 1.5;
-              proj.x += proj.speedX * dt;
-              proj.y += proj.speedY * dt;
-            }
-          } else {
-            proj.x += proj.speedX * dt;
-            proj.y += proj.speedY * dt;
-          }
-          break;
-        }
-        case 'DECELERATE': {
-          let directionX = proj.directionX;
-          let directionY = proj.directionY;
-          if (directionX === undefined || directionY === undefined) {
-            const currentLen = Math.hypot(proj.speedX, proj.speedY) || 1;
-            directionX = proj.speedX / currentLen;
-            directionY = proj.speedY / currentLen;
-            proj.directionX = directionX;
-            proj.directionY = directionY;
-          }
 
-          const initialSpeed = proj.initialSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_INITIAL_MULTIPLIER);
-          const finalSpeed = proj.slowSpeed ?? (currentEnemyProjectileSpeed * DECELERATE_FINAL_MULTIPLIER);
-
-          const initialDistance = proj.decelerateInitialDistance
-            ?? Math.max(1, Math.hypot(playerCenterX - proj.x, playerCenterY - proj.y));
-          proj.decelerateInitialDistance = initialDistance;
-
-          const distanceToPlayer = Math.hypot(playerCenterX - proj.x, playerCenterY - proj.y);
-          const clampedDistance = Math.min(Math.max(distanceToPlayer, 0), initialDistance);
-          const progress = initialDistance > 0 ? 1 - (clampedDistance / initialDistance) : 1;
-          const easedProgress = Math.min(Math.max(progress, 0), 1);
-          const targetSpeed = initialSpeed - (initialSpeed - finalSpeed) * easedProgress;
-
-          proj.speedX = (directionX || 0) * targetSpeed;
-          proj.speedY = (directionY || 0) * targetSpeed;
-          proj.x += proj.speedX * dt;
-          proj.y += proj.speedY * dt;
-          break;
-        }
-        case 'CIRCLE': {
-          const mode = proj.circleMode || 'APPROACH';
-          if (mode === 'APPROACH') {
-            proj.x += proj.speedX * dt;
-            proj.y += proj.speedY * dt;
-            const distanceToPlayer = Math.hypot(playerCenterX - proj.x, playerCenterY - proj.y);
-            if (distanceToPlayer <= CIRCLE_TRIGGER_RADIUS) {
-              proj.circleMode = 'GUIDE_ORBIT';
-              proj.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
-              proj.orbitCenterX = playerCenterX;
-              proj.orbitCenterY = playerCenterY;
-              proj.orbitRadius = Math.max(
-                CIRCLE_MIN_ORBIT_RADIUS,
-                Math.hypot(proj.x - playerCenterX, proj.y - playerCenterY)
-              );
-              proj.orbitAngle = Math.atan2(
-                proj.y - playerCenterY,
-                proj.x - playerCenterX
-              );
-              proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
-              proj.orbitAccumulatedAngle = 0;
-              proj.orbitDirection = proj.orbitDirection || (Math.random() > 0.5 ? 1 : -1);
-              proj.speedX = 0;
-              proj.speedY = 0;
-            }
-          } else if (mode === 'GUIDE_ORBIT') {
-            if (currentTime >= (proj.circleGuideUntil || 0)) {
-              proj.circleMode = 'ORBIT';
-              proj.circleGuideUntil = undefined;
-            }
-          } else if (mode === 'ORBIT') {
-            const angularSpeed = (proj.orbitAngularSpeed || CIRCLE_ORBIT_ANGULAR_SPEED) * (proj.orbitDirection || 1);
-            proj.orbitAngle = (proj.orbitAngle || 0) + angularSpeed * dt;
-            proj.orbitAccumulatedAngle = (proj.orbitAccumulatedAngle || 0) + Math.abs(angularSpeed * dt);
-            const radius = proj.orbitRadius || CIRCLE_MIN_ORBIT_RADIUS;
-            proj.x = (proj.orbitCenterX || playerCenterX) + Math.cos(proj.orbitAngle || 0) * radius;
-            proj.y = (proj.orbitCenterY || playerCenterY) + Math.sin(proj.orbitAngle || 0) * radius;
-            if ((proj.orbitAccumulatedAngle || 0) >= Math.PI * 2 * CIRCLE_ORBIT_LOOPS) {
-              proj.circleMode = 'GUIDE_DROP';
-              proj.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
-              proj.speedX = 0;
-              proj.speedY = 0;
-            }
-          } else if (mode === 'GUIDE_DROP') {
-            if (currentTime >= (proj.circleGuideUntil || 0)) {
-              proj.circleMode = 'DROP';
-              proj.circleGuideUntil = currentTime + CIRCLE_GUIDE_DURATION;
-              proj.speedX = 0;
-              proj.speedY = currentEnemyProjectileSpeed;
-            }
-          } else { // DROP
-            if (proj.circleGuideUntil !== undefined && currentTime >= proj.circleGuideUntil) {
-              proj.circleGuideUntil = undefined;
-            }
-            proj.x += proj.speedX * dt;
-            proj.y += proj.speedY * dt;
-          }
-          break;
-        }
-        default:
-          proj.x += proj.speedX * dt;
-          proj.y += proj.speedY * dt;
-          break;
-      }
-
-      return proj.y < GAME_HEIGHT + 20 && proj.y > -20 && proj.x > -20 && proj.x < GAME_WIDTH + 20;
-    }, (proj) => {
-      enemyProjectilePool.current.release(proj);
+    projectileManager.updateEnemyProjectiles({
+      dt,
+      currentTime,
+      projectileSpeed: currentEnemyProjectileSpeed,
+      playerCenterX,
+      playerCenterY,
     });
 
     // Update items and enemies without reallocating arrays
-    filterInPlace(state.items, (item) => {
-      item.y += item.speedY * dt;
-      return item.y < GAME_HEIGHT;
+    itemManager.updateItems(dt);
+
+    enemyManager.updateEnemies(dt);
+    enemyManager.updateEliteStates(currentTime);
+    enemyManager.handleFiring(currentTime, currentEnemyProjectileSpeed, {
+      x: state.playerX,
+      y: state.playerY,
+      width: PLAYER_WIDTH,
+      height: PLAYER_HEIGHT,
     });
-
-    filterInPlace(state.enemies, (enemy) => {
-      let newX = enemy.x;
-      let newY = enemy.y;
-      let newSpeedY = enemy.speedY;
-      let newSpeedX = enemy.speedX ?? 0;
-
-      if (enemy.movementPattern === 'ACCELERATING' && enemy.accelerationY) {
-        newSpeedY += enemy.accelerationY * dt;
-      }
-
-      newY += newSpeedY * dt;
-
-      switch (enemy.movementPattern) {
-        case 'SINE_WAVE':
-          if (enemy.initialX !== undefined && enemy.frequency !== undefined && enemy.amplitude !== undefined) {
-            newX = enemy.initialX + Math.sin(newY * enemy.frequency) * enemy.amplitude;
-          }
-          break;
-        case 'ZIG_ZAG': {
-          const currentSpeedX = enemy.speedX ?? 0;
-          if ((newX + currentSpeedX * dt <= 0) || (newX + currentSpeedX * dt >= GAME_WIDTH - enemy.width)) {
-            newSpeedX = -currentSpeedX;
-          } else {
-            newSpeedX = currentSpeedX;
-          }
-          newX += newSpeedX * dt;
-          break;
-        }
-        case 'DRIFTING':
-          newX += (enemy.speedX ?? 0) * dt;
-          break;
-      }
-
-      newX = Math.max(0, Math.min(GAME_WIDTH - enemy.width, newX));
-
-      enemy.x = newX;
-      enemy.y = newY;
-      enemy.speedY = newSpeedY;
-      if (enemy.movementPattern === 'ZIG_ZAG' || enemy.movementPattern === 'DRIFTING') {
-        enemy.speedX = newSpeedX;
-      }
-
-      return enemy.y < GAME_HEIGHT;
-    });
-
-    // Enemy state machines
-    for (let i = 0; i < state.enemies.length; i++) {
-        const e = state.enemies[i];
-        if (e.eliteType === 'LASER') {
-            switch (e.laserState) {
-                case 'AIMING':
-                    if (currentTime > e.laserStateChangeTime! + 1000) { // 1s aim time
-                        e.laserState = 'FIRING';
-                        e.laserStateChangeTime = currentTime;
-                    }
-                    break;
-                case 'FIRING':
-                    if (currentTime > e.laserStateChangeTime! + 300) { // 0.3s fire time
-                        e.laserState = 'COOLDOWN';
-                        e.laserStateChangeTime = currentTime;
-                    }
-                    break;
-                case 'COOLDOWN':
-                    if (currentTime > e.laserStateChangeTime! + 2000) { // 2s cooldown
-                        e.laserState = 'IDLE';
-                    }
-                    break;
-            }
-        }
-    }
-
-    // --- Enemy Firing ---
-    for (let index = 0; index < state.enemies.length; index++) {
-        const enemy = state.enemies[index];
-        if (!enemy.isShooter) continue;
-        if (enemy.attackPattern === 'BEAT') continue;
-        const cooldown = enemy.isElite && enemy.eliteType === 'MAGIC' ? ENEMY_FIRE_COOLDOWN / 3.5 : ENEMY_FIRE_COOLDOWN;
-        if (currentTime - (enemy.lastShotTime || 0) > cooldown && !enemy.gatlingCooldown) {
-            
-            if (enemy.isElite) {
-                switch(enemy.eliteType) {
-                    case 'LASER':
-                        if (enemy.laserState === 'IDLE') {
-                            enemy.laserState = 'AIMING';
-                            enemy.laserStateChangeTime = currentTime;
-                            enemy.laserTarget = { x: state.playerX + PLAYER_WIDTH / 2, y: state.playerY + PLAYER_HEIGHT / 2 };
-                            enemy.lastShotTime = currentTime;
-                        }
-                        break;
-                    case 'CIRCLE': {
-                        enemy.lastShotTime = currentTime;
-                        enemy.attackPattern = 'CIRCLE';
-                        const projectileBase = { id: currentTime + enemy.id, x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: 8, height: 8 };
-                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                        const approachSpeed = currentEnemyProjectileSpeed;
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'CIRCLE';
-                        proj.speedX = Math.cos(angle) * approachSpeed;
-                        proj.speedY = Math.sin(angle) * approachSpeed;
-                        proj.circleMode = 'APPROACH';
-                        proj.circleGuideUntil = undefined;
-                        proj.orbitCenterX = undefined;
-                        proj.orbitCenterY = undefined;
-                        proj.orbitRadius = undefined;
-                        proj.orbitAngle = undefined;
-                        proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
-                        proj.orbitAccumulatedAngle = 0;
-                        proj.orbitDirection = Math.random() > 0.5 ? 1 : -1;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    case 'LANDMINE':
-                        enemy.lastShotTime = currentTime;
-                        state.mines.push({ id: generateId(), x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: MINE_WIDTH, height: MINE_HEIGHT, createdAt: currentTime });
-                        break;
-                    case 'MAGIC': {
-                        enemy.lastShotTime = currentTime;
-                        const patterns: ShooterAttackPattern[] = ['HOMING', 'STRAIGHT_DOWN', 'DELAYED_HOMING', 'SPIRAL'];
-                        enemy.attackPattern = patterns[Math.floor(Math.random() * patterns.length)];
-                    }
-                    // Fallthrough for MAGIC to fire immediately
-                    case 'GATLING': {
-                        enemy.lastShotTime = currentTime;
-                        const projectileBase = { id: currentTime + enemy.id, x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: 8, height: 8 };
-                        let patternToFire = enemy.attackPattern!;
-                        if (enemy.eliteType === 'GATLING') {
-                            patternToFire = 'STRAIGHT_DOWN';
-                            enemy.gatlingBurstCount = 5;
-                            enemy.gatlingLastBurstTime = currentTime;
-                            enemy.gatlingCooldown = true;
-                        }
-
-                        switch(patternToFire) {
-                            case 'HOMING': {
-                                const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                                state.enemyProjectiles.push({
-                                    id: generateId(),
-                                    x: projectileBase.x,
-                                    y: projectileBase.y,
-                                    width: projectileBase.width,
-                                    height: projectileBase.height,
-                                    attackPattern: 'HOMING',
-                                    speedX: Math.cos(angle) * currentEnemyProjectileSpeed,
-                                    speedY: Math.sin(angle) * currentEnemyProjectileSpeed
-                                });
-                                break;
-                            }
-                            case 'STRAIGHT_DOWN': {
-                                state.enemyProjectiles.push({
-                                    id: generateId(),
-                                    x: projectileBase.x,
-                                    y: projectileBase.y,
-                                    width: projectileBase.width,
-                                    height: projectileBase.height,
-                                    attackPattern: 'STRAIGHT_DOWN',
-                                    speedX: 0,
-                                    speedY: currentEnemyProjectileSpeed
-                                });
-                                break;
-                            }
-                            case 'DELAYED_HOMING': {
-                                const proj = enemyProjectilePool.current.get();
-                                proj.id = generateId();
-                                proj.x = projectileBase.x;
-                                proj.y = projectileBase.y;
-                                proj.width = projectileBase.width;
-                                proj.height = projectileBase.height;
-                                proj.attackPattern = 'DELAYED_HOMING';
-                                proj.speedX = 0;
-                                proj.speedY = 0;
-                                proj.isDelayed = true;
-                                proj.delayEndTime = currentTime + 500;
-                                state.enemyProjectiles.push(proj);
-                                break;
-                            }
-                            case 'SPIRAL': {
-                                enemy.spiralAngle = (enemy.spiralAngle || 0) + 0.5;
-                                for (let i = 0; i < 4; i++) {
-                                    const angle = enemy.spiralAngle + (i * Math.PI / 2);
-                                    const proj = enemyProjectilePool.current.get();
-                                    proj.id = generateId();
-                                    proj.x = projectileBase.x;
-                                    proj.y = projectileBase.y;
-                                    proj.width = projectileBase.width;
-                                    proj.height = projectileBase.height;
-                                    proj.attackPattern = 'SPIRAL';
-                                    proj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 0.7;
-                                    proj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 0.7;
-                                    state.enemyProjectiles.push(proj);
-                                }
-                                break;
-                            }
-                            case 'CIRCLE': {
-                                const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                                const approachSpeed = currentEnemyProjectileSpeed;
-                                const proj = enemyProjectilePool.current.get();
-                                proj.id = generateId();
-                                proj.x = projectileBase.x;
-                                proj.y = projectileBase.y;
-                                proj.width = projectileBase.width;
-                                proj.height = projectileBase.height;
-                                proj.attackPattern = 'CIRCLE';
-                                proj.speedX = Math.cos(angle) * approachSpeed;
-                                proj.speedY = Math.sin(angle) * approachSpeed;
-                                proj.circleMode = 'APPROACH';
-                                proj.circleGuideUntil = undefined;
-                                proj.orbitCenterX = undefined;
-                                proj.orbitCenterY = undefined;
-                                proj.orbitRadius = undefined;
-                                proj.orbitAngle = undefined;
-                                proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
-                                proj.orbitAccumulatedAngle = 0;
-                                proj.orbitDirection = Math.random() > 0.5 ? 1 : -1;
-                                state.enemyProjectiles.push(proj);
-                                break;
-                            }
-                            default: {
-                                const proj = enemyProjectilePool.current.get();
-                                proj.id = generateId();
-                                proj.x = projectileBase.x;
-                                proj.y = projectileBase.y;
-                                proj.width = projectileBase.width;
-                                proj.height = projectileBase.height;
-                                proj.attackPattern = 'STRAIGHT_DOWN';
-                                proj.speedX = 0;
-                                proj.speedY = currentEnemyProjectileSpeed;
-                                state.enemyProjectiles.push(proj);
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-
-            } else { // Normal shooters
-                enemy.lastShotTime = currentTime;
-                const projectileBase = { id: currentTime + enemy.id, x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height, width: 8, height: 8 };
-                switch(enemy.attackPattern) {
-                    case 'HOMING': {
-                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'HOMING';
-                        proj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed;
-                        proj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    case 'STRAIGHT_DOWN': {
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'STRAIGHT_DOWN';
-                        proj.speedX = 0;
-                        proj.speedY = currentEnemyProjectileSpeed;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    case 'DELAYED_HOMING': {
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'DELAYED_HOMING';
-                        proj.speedX = 0;
-                        proj.speedY = 0;
-                        proj.isDelayed = true;
-                        proj.delayEndTime = currentTime + 500;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    case 'SPIRAL': {
-                        const randomAngle = Math.random() * Math.PI * 2;
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'SPIRAL';
-                        proj.speedX = Math.cos(randomAngle) * currentEnemyProjectileSpeed * 0.7;
-                        proj.speedY = Math.sin(randomAngle) * currentEnemyProjectileSpeed * 0.7;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    case 'SIDE': {
-                        const horizontalSpeed = currentEnemyProjectileSpeed * 0.75;
-                        const verticalSpeed = currentEnemyProjectileSpeed * 0.85;
-
-                        const leftProj = enemyProjectilePool.current.get();
-                        leftProj.id = generateId();
-                        leftProj.x = enemy.x;
-                        leftProj.y = projectileBase.y;
-                        leftProj.width = projectileBase.width;
-                        leftProj.height = projectileBase.height;
-                        leftProj.attackPattern = 'SIDE';
-                        leftProj.speedX = -horizontalSpeed;
-                        leftProj.speedY = verticalSpeed;
-                        state.enemyProjectiles.push(leftProj);
-
-                        const rightProj = enemyProjectilePool.current.get();
-                        rightProj.id = generateId();
-                        rightProj.x = enemy.x + enemy.width;
-                        rightProj.y = projectileBase.y;
-                        rightProj.width = projectileBase.width;
-                        rightProj.height = projectileBase.height;
-                        rightProj.attackPattern = 'SIDE';
-                        rightProj.speedX = horizontalSpeed;
-                        rightProj.speedY = verticalSpeed;
-                        state.enemyProjectiles.push(rightProj);
-                        break;
-                    }
-                    case 'DECELERATE': {
-                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                        const fastSpeed = currentEnemyProjectileSpeed * DECELERATE_INITIAL_MULTIPLIER;
-                        const dirX = Math.cos(angle);
-                        const dirY = Math.sin(angle);
-                        const slowSpeed = currentEnemyProjectileSpeed * DECELERATE_FINAL_MULTIPLIER;
-                        const initialDistance = Math.max(1, Math.hypot(
-                          (state.playerX + PLAYER_WIDTH / 2) - projectileBase.x,
-                          (state.playerY + PLAYER_HEIGHT / 2) - projectileBase.y
-                        ));
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'DECELERATE';
-                        proj.directionX = dirX;
-                        proj.directionY = dirY;
-                        proj.speedX = dirX * fastSpeed;
-                        proj.speedY = dirY * fastSpeed;
-                        proj.initialSpeed = fastSpeed;
-                        proj.slowSpeed = slowSpeed;
-                        proj.decelerateInitialDistance = initialDistance;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    case 'CIRCLE': {
-                        const angle = Math.atan2((state.playerY + PLAYER_HEIGHT/2) - projectileBase.y, (state.playerX + PLAYER_WIDTH/2) - projectileBase.x);
-                        const approachSpeed = currentEnemyProjectileSpeed;
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'CIRCLE';
-                        proj.speedX = Math.cos(angle) * approachSpeed;
-                        proj.speedY = Math.sin(angle) * approachSpeed;
-                        proj.circleMode = 'APPROACH';
-                        proj.circleGuideUntil = undefined;
-                        proj.orbitCenterX = undefined;
-                        proj.orbitCenterY = undefined;
-                        proj.orbitRadius = undefined;
-                        proj.orbitAngle = undefined;
-                        proj.orbitAngularSpeed = CIRCLE_ORBIT_ANGULAR_SPEED;
-                        proj.orbitAccumulatedAngle = 0;
-                        proj.orbitDirection = Math.random() > 0.5 ? 1 : -1;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                    default: {
-                        // Fallback to straight down if pattern not handled
-                        const proj = enemyProjectilePool.current.get();
-                        proj.id = generateId();
-                        proj.x = projectileBase.x;
-                        proj.y = projectileBase.y;
-                        proj.width = projectileBase.width;
-                        proj.height = projectileBase.height;
-                        proj.attackPattern = 'STRAIGHT_DOWN';
-                        proj.speedX = 0;
-                        proj.speedY = currentEnemyProjectileSpeed;
-                        state.enemyProjectiles.push(proj);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Handle Gatling Burst
-        if (enemy.gatlingCooldown && enemy.gatlingBurstCount! > 0 && currentTime - enemy.gatlingLastBurstTime! > 100) {
-            enemy.gatlingBurstCount!--;
-            enemy.gatlingLastBurstTime = currentTime;
-            
-            const proj = enemyProjectilePool.current.get();
-            proj.id = generateId();
-            proj.x = enemy.x + enemy.width / 2;
-            proj.y = enemy.y + enemy.height;
-            proj.width = 8;
-            proj.height = 8;
-            proj.attackPattern = 'STRAIGHT_DOWN';
-            proj.speedX = 0;
-            proj.speedY = currentEnemyProjectileSpeed;
-            state.enemyProjectiles.push(proj);
-            
-            if(enemy.gatlingBurstCount === 0) {
-                 setTimeout(() => { enemy.gatlingCooldown = false; }, ENEMY_FIRE_COOLDOWN);
-            }
-        }
-    }
 
     // --- Lyric Syncing and Enemy Spawning ---
     const audio = audioRef.current;
@@ -1734,7 +971,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       if (!state.showSkip && state.currentLyricIndex < lyrics.length && audio.currentTime >= lyrics[state.currentLyricIndex].time) {
         const line = lyrics[state.currentLyricIndex].text.replace(/\s/g, '');
         const spawnInterval = 100 / Math.max(1, line.length);
-        fireBeatShooters(currentTime);
+        enemyManager.triggerBeatShooters(currentTime, playerCenterX, playerCenterY);
 
         const progress = totalLyricLines > 0 ? (state.currentLyricIndex / totalLyricLines) : 0;
         const startTime = Date.now();
@@ -1775,554 +1012,86 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       spatialGrid.current.insert(minesArray[i]);
     }
     
-    const hitProjectiles = new Set<Projectile>();
-    const enemiesHitThisFrame = new Set<number>();
+    const takeHit = () => {
+      if (state.isInvincible || state.isRespawning || state.isGameEnding || state.isGameOverDelayed) return;
 
-    const handleItemCollection = (item: Item) => {
-        state.itemsCollected[item.type] = (state.itemsCollected[item.type] || 0) + 1;
-        // 効果音を再生
+      let cancellerNullified = false;
+      const cancellerChance = isLastStand ? 0.35 : 0.15;
+      if (state.hasCancellerShot && Math.random() < cancellerChance) {
+        cancellerNullified = true;
         playCancelSound();
-        
-        switch (item.type) {
-            case 'BOMB':
-                if (state.stockedItem) { // If holding an item, convert new one to score
-                    state.score += 500;
-                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
-                } else {
-                    state.stockedItem = item.type;
-                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'BOMB!', createdAt: Date.now() });
-                }
-                break;
-            case 'LASER_BEAM':
-                if (state.stockedItem) { // If holding an item, convert new one to score
-                    state.score += 500;
-                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
-                } else {
-                    state.stockedItem = item.type;
-                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'LASER!', createdAt: Date.now() });
-                }
-                break;
-            case 'PHASE_SHIELD':
-                if (state.stockedItem) {
-                    state.score += 500;
-                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+500', createdAt: Date.now() });
-                } else {
-                    state.stockedItem = item.type;
-                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SHIELD!', createdAt: Date.now() });
-                }
-                break;
-            case 'SPEED_UP':
-                state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SPEED UP!', createdAt: Date.now() });
-                state.playerSpeedMultiplier *= 1.15;
-                state.projectileSpeedMultiplier *= 1.15;
-                state.speedUpCount++;
-                break;
-            case 'DIAGONAL_SHOT':
-                if (!state.hasDiagonalShot) {
-                    state.hasDiagonalShot = true;
-                    state.baseShooterChance += 0.05;
-                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'DIAGONAL!', createdAt: Date.now() });
-                } else {
-                    state.score += 1000;
-                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
-                }
-                break;
-            case 'SIDE_SHOT':
-                if (!state.hasSideShot) {
-                    state.hasSideShot = true;
-                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'SIDE!', createdAt: Date.now() });
-                } else {
-                    state.score += 1000;
-                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
-                }
-                break;
-            case 'CANCELLER_SHOT':
-                if (!state.hasCancellerShot) {
-                    state.hasCancellerShot = true;
-                    state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'CANCELLER!', createdAt: Date.now() });
-                } else {
-                    state.score += 1000;
-                    state.floatingTexts.push({ id: generateId(), x: item.x, y: item.y, text: '+1000', createdAt: Date.now() });
-                }
-                break;
-            case 'RICOCHET_SHOT':
-                state.hasRicochetShot = true;
-                state.ricochetStacks = (state.ricochetStacks || 0) + 1;
-                state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: `RICOCHET x${state.ricochetStacks}` , createdAt: Date.now() });
-                break;
-            case 'ONE_UP':
-                state.lives++;
-                state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: '1UP!', createdAt: Date.now() });
-                break;
-        }
-    };
+        state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'GUARD!', createdAt: Date.now() });
+        state.isInvincible = true;
+        state.invincibilityEndTime = Date.now() + CANCELLER_INVINCIBILITY_DURATION;
+      }
 
-    // Helper: find nearest enemy to a point, optionally excluding one id
-    const findNearestEnemy = (x: number, y: number, excludeId?: number) => {
-        let best: Enemy | null = null;
-        let bestDist = Infinity;
-        for (let i = 0; i < state.enemies.length; i++) {
-            const e = state.enemies[i];
-            if (!e || (excludeId && e.id === excludeId)) continue;
-            const cx = e.x + e.width / 2;
-            const cy = e.y + e.height / 2;
-            const dx = cx - x;
-            const dy = cy - y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < bestDist) {
-                bestDist = d2;
-                best = e;
-            }
-        }
-        return best;
+      if (cancellerNullified) return;
+
+      state.lives--;
+      playShipHitSound();
+      const playerExplosion = explosionPool.current.get();
+      playerExplosion.id = generateId();
+      playerExplosion.x = state.playerX + PLAYER_WIDTH / 2;
+      playerExplosion.y = state.playerY + PLAYER_HEIGHT / 2;
+      playerExplosion.size = 'large';
+      playerExplosion.createdAt = Date.now();
+      state.explosions.push(playerExplosion);
+
+      playBombSound();
+      const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
+      onScreenEnemies.forEach(e => {
+        const explosion = explosionPool.current.get();
+        explosion.id = generateId();
+        explosion.x = e.x + e.width / 2;
+        explosion.y = e.y + e.height / 2;
+        explosion.size = 'small';
+        explosion.createdAt = Date.now();
+        state.explosions.push(explosion);
+        state.score += (e.isElite || e.isBig ? 75 : 10);
+        state.enemiesDefeated++;
+      });
+      const onScreenEnemyIds = new Set(onScreenEnemies.map(e => e.id));
+      if (onScreenEnemyIds.size > 0) {
+        filterInPlace(state.enemies, enemy => !onScreenEnemyIds.has(enemy.id));
+      }
+
+      if (state.lives === 1 && !state.stockedItem) {
+        state.stockedItem = Math.random() > 0.5 ? 'BOMB' : 'LASER_BEAM';
+        state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'LAST STAND!', createdAt: Date.now() });
+      }
+
+      if (state.lives <= 0) {
+        state.isGameOverDelayed = true;
+        state.gameOverDelayEndTime = Date.now() + 5000;
+        state.shouldHidePlayer = true;
+        state.showGameOverText = true;
+        fadeOutBgm(4);
+      } else {
+        state.isRespawning = true;
+        state.respawnEndTime = Date.now() + RESPAWN_DURATION;
+      }
     };
 
     // Optimized Projectiles vs Enemies collision
-    const enemyBuffer = collisionBuffersRef.current.enemies;
-    const projectileCountForEnemies = state.projectiles.length;
-    for (let i = 0; i < projectileCountForEnemies; i++) {
-        const p = state.projectiles[i];
-        if (hitProjectiles.has(p)) continue;
-
-        const nearbyEnemies = spatialGrid.current.queryNearby(p, enemyBuffer);
-        for (let j = 0; j < nearbyEnemies.length; j++) {
-            const e = nearbyEnemies[j] as Enemy;
-            if (!e || !e.char || enemiesHitThisFrame.has(e.id)) continue;
-
-            // AABB collision check
-            if (p.x < e.x + e.width && p.x + p.width > e.x && p.y < e.y + e.height && p.y + p.height > e.y) {
-                hitProjectiles.add(p);
-                e.hp!--;
-                e.isFlashing = true;
-                e.flashEndTime = Date.now() + 100;
-
-                // Ricochet bounce trigger: when bullet has remaining bounces
-                if ((p.remainingBounces || 0) > 0) {
-                    const impactX = p.x + p.width / 2;
-                    const impactY = p.y + p.height / 2;
-                    const target = findNearestEnemy(impactX, impactY, e.id);
-                    if (target) {
-                        const tx = target.x + target.width / 2;
-                        const ty = target.y + target.height / 2;
-                        let dirX = tx - impactX;
-                        let dirY = ty - impactY;
-                        let dirLen = Math.hypot(dirX, dirY);
-                        if (dirLen < 1e-3) {
-                            const prevWorldVX = p.speedX || 0;
-                            const prevWorldVY = -(p.speedY);
-                            const prevLen = Math.hypot(prevWorldVX, prevWorldVY);
-                            if (prevLen > 1e-3) {
-                                dirX = prevWorldVX / prevLen;
-                                dirY = prevWorldVY / prevLen;
-                            } else {
-                                dirX = 0;
-                                dirY = -1;
-                            }
-                        } else {
-                            dirX /= dirLen;
-                            dirY /= dirLen;
-                        }
-
-                        let baseSpeed = Math.hypot(p.speedX || 0, p.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
-                        let nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
-                        if (!isLastStand) {
-                            nextSpeed = Math.max(nextSpeed, MIN_RICOCHET_SPEED);
-                        }
-
-                        const vx = dirX * nextSpeed;
-                        const vy = dirY * nextSpeed; // positive is downward
-                        const bounce = projectilePool.current.get();
-                        bounce.id = generateId();
-                        bounce.x = impactX - RICOCHET_DIAMETER / 2;
-                        bounce.y = impactY - RICOCHET_DIAMETER / 2;
-                        bounce.width = RICOCHET_DIAMETER;
-                        bounce.height = RICOCHET_DIAMETER;
-                        bounce.speedX = vx;
-                        bounce.speedY = -vy; // convert to internal sign convention (y -= speedY*dt)
-                        bounce.isRicochetPrimary = false;
-                        bounce.hasBounced = true;
-                        bounce.remainingBounces = (p.remainingBounces || 0) - 1;
-                        state.projectiles.push(bounce);
-                    }
-                }
-
-                if (e.hp! <= 0) {
-                    enemiesHitThisFrame.add(e.id);
-                    state.score += (e.isElite || e.isBig ? 75 : 10);
-                    state.enemiesDefeated++;
-
-                    const explosion = explosionPool.current.get();
-                    explosion.id = generateId();
-                    explosion.x = e.x + e.width / 2;
-                    explosion.y = e.y + e.height / 2;
-                    explosion.size = (e.isElite || e.isBig) ? 'large' : 'small';
-                    explosion.createdAt = Date.now();
-                    state.explosions.push(explosion);
-                }
-                break;
-            }
-        }
-    }
-    
-    // Remove hit projectiles
-    filterInPlace(state.projectiles, (p) => !hitProjectiles.has(p), (p) => {
-      projectilePool.current.release(p);
-    });
-    
-    // Remove destroyed enemies
-    if (enemiesHitThisFrame.size > 0) {
-      filterInPlace(state.enemies, (enemy) => !enemiesHitThisFrame.has(enemy.id));
-    }
-
-    // Laser vs Enemies
-    if (state.isLaserActive) {
-        const laserX = state.playerX + PLAYER_WIDTH / 2;
-        const laserLine = { p1: {x: laserX, y: 0}, p2: {x: laserX, y: state.playerY} };
-        filterInPlace(state.enemies, (enemy) => {
-          const enemyRect = { x: enemy.x, y: enemy.y, width: enemy.width, height: enemy.height };
-          if (lineIntersectsRect(laserLine, enemyRect)) {
-            state.score += 5;
-            const explosion = explosionPool.current.get();
-            explosion.id = generateId();
-            explosion.x = enemy.x + enemy.width / 2;
-            explosion.y = enemy.y + enemy.height / 2;
-            explosion.size = 'small';
-            explosion.createdAt = Date.now();
-            state.explosions.push(explosion);
-            return false; // Enemy destroyed
-          }
-          return true;
-        });
-    }
-
-    const playerHitbox = {
-      x: state.playerX,
-      y: state.playerY,
-      width: PLAYER_WIDTH,
-      height: PLAYER_HEIGHT,
-    };
-
-    const takeHit = () => {
-        if (state.isInvincible || state.isRespawning || state.isGameEnding || state.isGameOverDelayed) return;
-        
-        // Canceller Shot damage nullification
-        let cancellerNullified = false;
-        const cancellerChance = isLastStand ? 0.35 : 0.15;
-        if (state.hasCancellerShot && Math.random() < cancellerChance) {
-             cancellerNullified = true;
-             playCancelSound();
-             state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'GUARD!', createdAt: Date.now() });
-             
-             // Add 0.5 second invincibility after canceller activation
-             state.isInvincible = true;
-             state.invincibilityEndTime = Date.now() + CANCELLER_INVINCIBILITY_DURATION;
-        }
-
-        if(cancellerNullified) return;
-
-        state.lives--;
-        playShipHitSound();
-        const playerExplosion = explosionPool.current.get();
-        playerExplosion.id = generateId();
-        playerExplosion.x = state.playerX + PLAYER_WIDTH / 2;
-        playerExplosion.y = state.playerY + PLAYER_HEIGHT / 2;
-        playerExplosion.size = 'large';
-        playerExplosion.createdAt = Date.now();
-        state.explosions.push(playerExplosion);
-        
-        // Activate bomb effect when player is destroyed (clear all on-screen enemies)
-        playBombSound();
-        const onScreenEnemies = state.enemies.filter(e => e.y > -ENEMY_HEIGHT && e.y < GAME_HEIGHT);
-        onScreenEnemies.forEach(e => {
-            const explosion = explosionPool.current.get();
-            explosion.id = generateId();
-            explosion.x = e.x + e.width / 2;
-            explosion.y = e.y + e.height / 2;
-            explosion.size = 'small';
-            explosion.createdAt = Date.now();
-            state.explosions.push(explosion);
-            state.score += (e.isElite || e.isBig ? 75 : 10);
-            state.enemiesDefeated++;
-        });
-        const onScreenEnemyIds = new Set(onScreenEnemies.map(e => e.id));
-        if (onScreenEnemyIds.size > 0) {
-          filterInPlace(state.enemies, (enemy) => !onScreenEnemyIds.has(enemy.id));
-        }
-        
-        if (state.lives === 1 && !state.stockedItem) {
-            state.stockedItem = Math.random() > 0.5 ? 'BOMB' : 'LASER_BEAM';
-            state.floatingTexts.push({ id: generateId(), x: state.playerX, y: state.playerY, text: 'LAST STAND!', createdAt: Date.now() });
-        }
-        
-        if (state.lives <= 0) {
-            // ゲームオーバー遅延状態に設定
-            state.isGameOverDelayed = true;
-            state.gameOverDelayEndTime = Date.now() + 5000; // 5秒後にリザルト画面へ
-            state.shouldHidePlayer = true; // 撃墜直後にプレイヤーを非表示
-            state.showGameOverText = true; // ゲームオーバーテキストを即座に表示
-            fadeOutBgm(4); // 4秒かけてBGMフェードアウト
-        } else {
-            state.isRespawning = true;
-            state.respawnEndTime = Date.now() + RESPAWN_DURATION;
-        }
-    };
-    
-    // Enemy Projectiles vs Player
-    filterInPlace(state.enemyProjectiles, (p) => {
-      if (p.x < playerHitbox.x + playerHitbox.width && p.x + p.width > playerHitbox.x && p.y < playerHitbox.y + playerHitbox.height && p.y + p.height > playerHitbox.y) {
-        if (state.isPhaseShieldActive) {
-          // With Canceller, reflect the projectile back
-          if (state.hasCancellerShot) {
-            const proj = projectilePool.current.get();
-            proj.id = generateId();
-            proj.x = state.playerX + PLAYER_WIDTH / 2 - PROJECTILE_WIDTH / 2;
-            proj.y = state.playerY;
-            proj.width = PROJECTILE_WIDTH;
-            proj.height = PROJECTILE_HEIGHT;
-            proj.speedX = -(p.speedX);
-            // Ensure upward travel; if incoming was upward, invert to downward then upward min speed
-            const baseUp = Math.max(INITIAL_PROJECTILE_SPEED_PER_SECOND * 0.7, -p.speedY);
-            proj.speedY = baseUp;
-            proj.isRicochetPrimary = false;
-            proj.hasBounced = false;
-            proj.remainingBounces = 0;
-            state.projectiles.push(proj);
-            playCancelSound();
-          }
-        } else {
-          takeHit();
-        }
-        return false; // absorbed or hit player
-      }
-      return true;
-    }, (p) => {
-      enemyProjectilePool.current.release(p);
+    projectileManager.resolveCollisions({
+      isLastStand,
+      enemyProjectileSpeed: currentEnemyProjectileSpeed,
+      currentTime,
+      player: { x: state.playerX, y: state.playerY, width: PLAYER_WIDTH, height: PLAYER_HEIGHT },
+      spatialGrid: spatialGrid.current,
+      collisionBuffers: collisionBuffersRef.current,
+      playerHitCallback: takeHit,
+      hasLaser: state.enemies.some(e => e.eliteType === 'LASER'),
+      laserActive: state.isLaserActive,
+      generateId,
     });
 
-    // Enemy Lasers vs Player
-    for (let i = 0; i < state.enemies.length; i++) {
-        const e = state.enemies[i];
-        if (e.eliteType === 'LASER' && e.laserState === 'FIRING' && e.laserTarget) {
-            const laserLine = { p1: { x: e.x + e.width / 2, y: e.y + e.height }, p2: { x: e.laserTarget.x, y: e.laserTarget.y } };
-            if (lineIntersectsRect(laserLine, playerHitbox)) {
-                takeHit();
-            }
-        }
-    }
-
-    // Mines vs Player
-    filterInPlace(state.mines, (m) => {
-      if (m.x < playerHitbox.x + playerHitbox.width && m.x + m.width > playerHitbox.x && m.y < playerHitbox.y + playerHitbox.height && m.y + m.height > playerHitbox.y) {
-        takeHit();
-        return false;
-      }
-      return true;
-    });
-
-    // Player Projectiles vs Enemy Projectiles (Canceller Shot) - optimized
-    if (state.hasCancellerShot) {
-        const playerProjsToRemove = new Set<Projectile>();
-        const enemyProjsToRemove = new Set<EnemyProjectile>();
-        
-        const enemyProjectileBuffer = collisionBuffersRef.current.enemyProjectiles;
-        const projectileCountForCanceller = state.projectiles.length;
-        for (let i = 0; i < projectileCountForCanceller; i++) {
-            const playerP = state.projectiles[i];
-            if (playerProjsToRemove.has(playerP)) continue;
-
-            const nearbyEnemyProj = spatialGrid.current.queryNearby(playerP, enemyProjectileBuffer);
-            for (let j = 0; j < nearbyEnemyProj.length; j++) {
-                const enemyP = nearbyEnemyProj[j] as EnemyProjectile;
-                if (!enemyP || !enemyP.attackPattern || enemyProjsToRemove.has(enemyP)) continue;
-
-                if (playerP.x < enemyP.x + enemyP.width && playerP.x + playerP.width > enemyP.x && playerP.y < enemyP.y + enemyP.height && playerP.y + playerP.height > enemyP.y) {
-                    if ((playerP.remainingBounces || 0) > 0) {
-                        const impactX = playerP.x + playerP.width / 2;
-                        const impactY = playerP.y + playerP.height / 2;
-                        const target = findNearestEnemy(impactX, impactY);
-                        if (target) {
-                            const tx = target.x + target.width / 2;
-                            const ty = target.y + target.height / 2;
-                            let dirX = tx - impactX;
-                            let dirY = ty - impactY;
-                            let dirLen = Math.hypot(dirX, dirY);
-                            if (dirLen < 1e-3) {
-                                const prevWorldVX = playerP.speedX || 0;
-                                const prevWorldVY = -(playerP.speedY);
-                                const prevLen = Math.hypot(prevWorldVX, prevWorldVY);
-                                if (prevLen > 1e-3) {
-                                    dirX = prevWorldVX / prevLen;
-                                    dirY = prevWorldVY / prevLen;
-                                } else {
-                                    dirX = 0;
-                                    dirY = -1;
-                                }
-                            } else {
-                                dirX /= dirLen;
-                                dirY /= dirLen;
-                            }
-
-                            let baseSpeed = Math.hypot(playerP.speedX || 0, playerP.speedY) || (INITIAL_PROJECTILE_SPEED_PER_SECOND * state.projectileSpeedMultiplier);
-                            let nextSpeed = baseSpeed * (isLastStand ? 1 : RICOCHET_SPEED_FACTOR);
-                            if (!isLastStand) {
-                                nextSpeed = Math.max(nextSpeed, MIN_RICOCHET_SPEED);
-                            }
-
-                            const vx = dirX * nextSpeed;
-                            const vy = dirY * nextSpeed;
-                            const ricochet = projectilePool.current.get();
-                            ricochet.id = generateId();
-                            ricochet.x = impactX - RICOCHET_DIAMETER / 2;
-                            ricochet.y = impactY - RICOCHET_DIAMETER / 2;
-                            ricochet.width = RICOCHET_DIAMETER;
-                            ricochet.height = RICOCHET_DIAMETER;
-                            ricochet.speedX = vx;
-                            ricochet.speedY = -vy;
-                            ricochet.isRicochetPrimary = false;
-                            ricochet.hasBounced = true;
-                            ricochet.remainingBounces = (playerP.remainingBounces || 0) - 1;
-                            state.projectiles.push(ricochet);
-                        }
-                    }
-                    playerProjsToRemove.add(playerP);
-                    enemyProjsToRemove.add(enemyP);
-                    break;
-                }
-            }
-        }
-        
-        if (playerProjsToRemove.size > 0) {
-          filterInPlace(state.projectiles, (p) => !playerProjsToRemove.has(p), (p) => {
-            projectilePool.current.release(p);
-          });
-        }
-        if (enemyProjsToRemove.size > 0) {
-          filterInPlace(state.enemyProjectiles, (p) => !enemyProjsToRemove.has(p), (p) => {
-            enemyProjectilePool.current.release(p);
-          });
-        }
-    }
-
-    // Player Projectiles vs Mines (optimized)
-    const mineProjsToRemove = new Set<Projectile>();
-    const minesToRemove = new Set<Mine>();
-    
-    const mineBuffer = collisionBuffersRef.current.mines;
-    const projectileCountForMines = state.projectiles.length;
-    for (let i = 0; i < projectileCountForMines; i++) {
-        const p = state.projectiles[i];
-        if (mineProjsToRemove.has(p)) continue;
-
-        const nearbyMines = spatialGrid.current.queryNearby(p, mineBuffer);
-        for (let j = 0; j < nearbyMines.length; j++) {
-            const m = nearbyMines[j] as Mine;
-            if (!m || m.createdAt === undefined || minesToRemove.has(m)) continue;
-
-            if (p.x < m.x + m.width && p.x + p.width > m.x && p.y < m.y + m.height && p.y + p.height > m.y) {
-                mineProjsToRemove.add(p);
-                minesToRemove.add(m);
-
-                for (let k = 0; k < 5; k++) {
-                    const angle = (k * Math.PI * 2 / 5) - (Math.PI / 2);
-                    const burstProj = enemyProjectilePool.current.get();
-                    burstProj.id = generateId();
-                    burstProj.x = m.x;
-                    burstProj.y = m.y;
-                    burstProj.width = 8;
-                    burstProj.height = 8;
-                    burstProj.attackPattern = 'STRAIGHT_DOWN';
-                    burstProj.speedX = Math.cos(angle) * currentEnemyProjectileSpeed * 0.8;
-                    burstProj.speedY = Math.sin(angle) * currentEnemyProjectileSpeed * 0.8;
-                    state.enemyProjectiles.push(burstProj);
-                }
-
-                const explosion = explosionPool.current.get();
-                explosion.id = generateId();
-                explosion.x = m.x + m.width / 2;
-                explosion.y = m.y + m.height / 2;
-                explosion.size = 'small';
-                explosion.createdAt = Date.now();
-                state.explosions.push(explosion);
-                break;
-            }
-        }
-    }
-
-    if (mineProjsToRemove.size > 0) {
-      filterInPlace(state.projectiles, (p) => !mineProjsToRemove.has(p), (p) => {
-        projectilePool.current.release(p);
-      });
-    }
-    if (minesToRemove.size > 0) {
-      filterInPlace(state.mines, (m) => !minesToRemove.has(m));
-    }
-    
-    // Enemies vs Player
-    for (let i = 0; i < state.enemies.length; i++) {
-        const e = state.enemies[i];
-        if (e.x < playerHitbox.x + playerHitbox.width && e.x + e.width > playerHitbox.x && e.y < playerHitbox.y + playerHitbox.height && e.y + e.height > playerHitbox.y) {
-            if (state.isPhaseShieldActive) {
-                const scored = (e.isElite || e.isBig) ? 75 : 10;
-                state.score += scored;
-                state.enemiesDefeated++;
-                const explosion = explosionPool.current.get();
-                explosion.id = generateId();
-                explosion.x = e.x + e.width / 2;
-                explosion.y = e.y + e.height / 2;
-                explosion.size = e.isElite || e.isBig ? 'large' : 'small';
-                explosion.createdAt = Date.now();
-                state.explosions.push(explosion);
-                enemiesHitThisFrame.add(e.id);
-            } else {
-                takeHit();
-            }
-        }
-    }
-    // Remove enemies destroyed by shield contact in this frame
-    if (enemiesHitThisFrame.size > 0) {
-        filterInPlace(state.enemies, (enemy) => !enemiesHitThisFrame.has(enemy.id));
-    }
-    
     // Items vs Player
-    filterInPlace(state.items, (item) => {
-      if (item.x < playerHitbox.x + playerHitbox.width && item.x + item.width > playerHitbox.x && item.y < playerHitbox.y + playerHitbox.height && item.y + item.height > playerHitbox.y) {
-        handleItemCollection(item);
-        return false;
-      }
-      return true;
-    });
+    itemManager.collectItems({ x: state.playerX, y: state.playerY, width: PLAYER_WIDTH, height: PLAYER_HEIGHT });
 
     // Item Spawning
-    const itemSpawnThreshold = superHardMode ? 0.07 : ITEM_SPAWN_PERCENTAGE;
-    if (totalChars > 0 && state.enemiesDefeated / totalChars >= itemSpawnMilestone.current + itemSpawnThreshold) {
-        itemSpawnMilestone.current += itemSpawnThreshold;
-        
-        let availableItemTypes: ItemType[] = ['SPEED_UP', 'DIAGONAL_SHOT', 'SIDE_SHOT', 'CANCELLER_SHOT', 'RICOCHET_SHOT', 'BOMB', 'LASER_BEAM', 'PHASE_SHIELD', 'ONE_UP'];
-        
-        if (state.hasDiagonalShot) {
-            availableItemTypes = availableItemTypes.filter(t => t !== 'DIAGONAL_SHOT');
-        }
-        if (state.hasSideShot) {
-            availableItemTypes = availableItemTypes.filter(t => t !== 'SIDE_SHOT');
-        }
-        if (state.hasCancellerShot) {
-            availableItemTypes = availableItemTypes.filter(t => t !== 'CANCELLER_SHOT');
-        }
-        // Ricochet is stackable; keep it in the pool
+    itemManager.spawnItems(itemSpawnMilestone, totalChars);
 
-        if (availableItemTypes.length > 0) {
-            const type = availableItemTypes[Math.floor(Math.random() * availableItemTypes.length)];
-            state.items.push({
-                id: generateId(),
-                type,
-                x: Math.random() * (GAME_WIDTH - ITEM_WIDTH),
-                y: -ITEM_HEIGHT,
-                width: ITEM_WIDTH,
-                height: ITEM_HEIGHT,
-                speedY: ENEMY_SPEED_PER_SECOND * 1.5,
-            });
-        }
-    }
 
     // Force re-render for smooth gameplay
     forceUpdate(c => c + 1);
@@ -2335,12 +1104,12 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     return () => {
       // Clear all pools to free memory
       projectilePool.current = new ObjectPool<Projectile>(
-        () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0 }),
-        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = PROJECTILE_WIDTH; obj.height = PROJECTILE_HEIGHT; obj.speedY = 0; obj.speedX = undefined; }
+        () => ({ id: 0, x: 0, y: 0, width: PROJECTILE_WIDTH, height: PROJECTILE_HEIGHT, speedY: 0, entityType: 'playerProjectile' }),
+        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = PROJECTILE_WIDTH; obj.height = PROJECTILE_HEIGHT; obj.speedY = 0; obj.speedX = undefined; obj.entityType = 'playerProjectile'; }
       );
       enemyProjectilePool.current = new ObjectPool<EnemyProjectile>(
-        () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN' }),
-        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = 8; obj.height = 8; obj.speedX = 0; obj.speedY = 0; obj.attackPattern = 'STRAIGHT_DOWN'; obj.isDelayed = false; obj.delayEndTime = undefined; }
+        () => ({ id: 0, x: 0, y: 0, width: 8, height: 8, speedX: 0, speedY: 0, attackPattern: 'STRAIGHT_DOWN', entityType: 'enemyProjectile' }),
+        (obj) => { obj.id = 0; obj.x = 0; obj.y = 0; obj.width = 8; obj.height = 8; obj.speedX = 0; obj.speedY = 0; obj.entityType = 'enemyProjectile'; obj.attackPattern = 'STRAIGHT_DOWN'; obj.isDelayed = false; obj.delayEndTime = undefined; }
       );
       explosionPool.current = new ObjectPool<Explosion>(
         () => ({ id: 0, x: 0, y: 0, size: 'small', createdAt: 0 }),
@@ -2362,7 +1131,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
             setupAudio();
         }
         
-        if ((e.key === ' ' || e.code === 'Spacebar') && gameStateRef.current.showSkip && spacebarPressStart.current === 0) {
+        if ((e.key === ' ' || e.code === 'Spacebar' || e.code === 'Space') && gameStateRef.current.showSkip && spacebarPressStart.current === 0) {
             spacebarPressStart.current = Date.now();
         }
         if ((e.key === 'Shift' || e.code === 'Tab') && !gameStateRef.current.isGameOverDelayed) {
@@ -2380,7 +1149,7 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
     const handleKeyUp = (e: KeyboardEvent) => {
         keysPressed.current[e.key] = false;
         keysPressed.current[e.code] = false;
-        if ((e.key === ' ' || e.code === 'Spacebar') && gameStateRef.current.showSkip) {
+        if ((e.key === ' ' || e.code === 'Spacebar' || e.code === 'Space') && gameStateRef.current.showSkip) {
             spacebarPressStart.current = 0;
             gameStateRef.current.spacePressProgress = 0;
             if(gameStateRef.current.spacePressProgress < 100) {

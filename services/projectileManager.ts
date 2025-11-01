@@ -442,6 +442,7 @@ class ProjectileManager {
           projectile.x + projectile.width > enemy.x &&
           projectile.y < enemy.y + enemy.height &&
           projectile.y + projectile.height > enemy.y
+        ) {
           enemy.hp = (enemy.hp ?? 1) - 1;
           hitProjectiles.add(projectile);
           enemy.hp!--;

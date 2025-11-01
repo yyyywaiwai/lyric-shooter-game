@@ -17,6 +17,19 @@ export const UploadIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNod
   </svg>
 );
 
+export const PreviewPlayIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNode => (
+  <svg
+    {...props}
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="currentColor"
+  >
+    <path
+      d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.5 6.75c0-.41.44-.66.78-.44l5 3.25a.5.5 0 0 1 0 .84l-5 3.25a.5.5 0 0 1-.78-.42V8.75z"
+    />
+  </svg>
+);
+
 export const BombIcon = (props: React.SVGProps<SVGSVGElement>): React.ReactNode => (
     <svg 
         {...props}

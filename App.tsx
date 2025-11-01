@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { LyricLine, GameStatus, GameStats, ItemType, SongMetadata } from './types';
 import FileUploader from './components/FileUploader';
 import GameScreen from './components/GameScreen';
@@ -82,17 +82,6 @@ const InfoPanel = () => (
                 <li>Canceller Shot's damage nullification chance increases to 35%.</li>
             </ul>
         </div>
-        <div className="md:col-span-2 pt-4 border-t-2 border-slate-700">
-            <h3 className="text-2xl font-orbitron text-red-500 mb-4 text-center">SUPER HARD MODE (Enter ↑↑↓↓←→←→BA at READY)</h3>
-             <ul className="space-y-2 text-white list-disc list-inside">
-                <li>Start with a 15% boost to ship speed and projectile speed.</li>
-                <li>Choose one starting item.</li>
-                <li>Item drop rate is increased (every ~7% of enemies defeated).</li>
-                <li>Elite Shooters appear from the beginning.</li>
-                <li>Enemy shooter mutation chance is increased by 5%.</li>
-                <li>After 50% song progress: All normal shooters become "Big" (3 hits to defeat) and enemy projectiles are 5% faster.</li>
-            </ul>
-        </div>
     </div>
 );
 
@@ -120,6 +109,100 @@ const ControlsPanel = () => (
         </div>
     </div>
 );
+
+type DifficultyMode = 'normal' | 'superHard';
+
+interface RateSegment {
+    start: number;
+    end: number;
+    enemyRate: number;
+}
+
+interface SongAnalysisStats {
+    totalEnemies: number;
+    enemyRate: number;
+    durationSeconds: number;
+    segments: RateSegment[];
+}
+
+const DifficultyTabs = ({ mode, onChange }: { mode: DifficultyMode; onChange: (mode: DifficultyMode) => void }) => {
+    const tabs: { id: DifficultyMode; label: string; description: string }[] = [
+        {
+            id: 'normal',
+            label: 'Normal',
+            description: 'Standard enemy waves and item drops. Ideal for first runs.'
+        },
+        {
+            id: 'superHard',
+            label: 'Super Hard',
+            description: 'Relentless enemy patterns. Pick a starting item before you launch!'
+        }
+    ];
+
+    return (
+        <div className="max-w-xl mx-auto mt-8">
+            <div className="flex bg-slate-900 border-2 border-slate-600 rounded-lg overflow-hidden">
+                {tabs.map(tab => {
+                    const isActive = tab.id === mode;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => onChange(tab.id)}
+                            className={`flex-1 px-6 py-3 font-orbitron text-lg transition-all duration-200 ${
+                                isActive
+                                    ? 'bg-slate-700 text-sky-300 border-b-2 border-sky-400 shadow-inner'
+                                    : 'text-slate-400 hover:text-sky-200 hover:bg-slate-800'
+                            }`}
+                        >
+                            {tab.label}
+                        </button>
+                    );
+                })}
+            </div>
+            <p className="mt-4 text-sm text-slate-300 text-center px-4">{tabs.find(tab => tab.id === mode)?.description}</p>
+        </div>
+    );
+};
+
+const DIFFICULTY_DETAILS: Record<DifficultyMode, { title: string; bullets: string[] }> = {
+    normal: {
+        title: 'Normal Mode Specs',
+        bullets: [
+            'Balanced ship speed and projectile pacing.',
+            'Begin with an empty special slot—earn upgrades from random drops.',
+            'Elite Shooters join the battle after 50% song progress.',
+            'Enemy shooter mutations follow their standard probability.',
+            'Recommended for learning attack patterns and item synergies.'
+        ]
+    },
+    superHard: {
+        title: 'Super Hard Mode Specs',
+        bullets: [
+            'Start with a 15% boost to ship movement and projectile speed.',
+            'Select one starting item before launching into battle.',
+            'Item crates appear more frequently (roughly every 7% of enemies defeated).',
+            'Elite Shooters deploy from the very beginning of the song.',
+            'Enemy shooter mutation chance is increased by 5%.',
+            'After 50% progress all baseline shooters become “Big” (3 hits) and enemy shots gain +5% speed.'
+        ]
+    }
+};
+
+const DifficultyDetails = ({ mode }: { mode: DifficultyMode }) => {
+    const spec = DIFFICULTY_DETAILS[mode];
+    return (
+        <div className="mt-6 max-w-xl mx-auto bg-slate-900 border-2 border-slate-700 rounded-lg p-6 text-left text-white">
+            <h3 className="text-xl font-orbitron text-sky-300 mb-3 text-center uppercase tracking-widest">{spec.title}</h3>
+            <ul className="space-y-2 list-disc list-inside text-sm md:text-base text-slate-200">
+                {spec.bullets.map(bullet => (
+                    <li key={bullet} className="leading-relaxed">
+                        {bullet}
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+};
 
 const getItemIcon = (itemType: ItemType, props?: React.SVGProps<SVGSVGElement>) => {
     const iconProps = { className: "w-6 h-6 mr-3 flex-shrink-0", ...props };
@@ -190,14 +273,175 @@ const StatsPanel = ({ stats }: { stats: GameStats }) => {
     );
 };
 
-const SongInfo = ({ metadata }: { metadata: SongMetadata }) => (
-    <div className="flex flex-col items-center justify-center mb-8 p-4 bg-black bg-opacity-20 rounded-lg">
-        {metadata.picture && (
-            <img src={metadata.picture} alt="Album Art" className="w-40 h-40 object-cover rounded-lg shadow-lg mb-4" />
-        )}
-        <h2 className="text-3xl font-bold font-orbitron text-white text-center">{metadata.title}</h2>
-    </div>
-);
+const formatSongDuration = (seconds: number): string => {
+    if (!Number.isFinite(seconds) || seconds <= 0) return '--:--';
+    const totalSeconds = Math.round(seconds);
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+};
+
+interface SongInfoProps {
+    metadata: SongMetadata;
+    stats?: SongAnalysisStats | null;
+    showRateChart?: boolean;
+    onToggleRateChart?: () => void;
+}
+
+const RateChart = ({ segments }: { segments: RateSegment[] }) => {
+    if (!segments.length) return null;
+    const maxRate = segments.reduce((max, seg) => Math.max(max, seg.enemyRate), 0);
+    const safeMax = maxRate > 0 ? maxRate : 1;
+    const count = segments.length;
+    const chartHeight = 140;
+    const baseWidth = 80;
+    const chartWidth = count > 1 ? (count - 1) * baseWidth : baseWidth;
+
+    const points = segments.map((seg, idx) => {
+        const x = count > 1 ? (chartWidth / (count - 1)) * idx : chartWidth / 2;
+        const y = chartHeight - (seg.enemyRate / safeMax) * chartHeight;
+        return { x, y, rate: seg.enemyRate, label: formatSongDuration(seg.start) };
+    });
+
+    const linePath = (() => {
+        if (count === 1) {
+            const y = points[0].y;
+            return `M0 ${y} L${chartWidth} ${y}`;
+        }
+        return points
+            .map((point, idx) => `${idx === 0 ? 'M' : 'L'}${point.x} ${point.y}`)
+            .join(' ');
+    })();
+
+    const areaPath = (() => {
+        if (count === 1) {
+            const y = points[0].y;
+            return `M0 ${chartHeight} L0 ${y} L${chartWidth} ${y} L${chartWidth} ${chartHeight} Z`;
+        }
+        const pathPoints = points.map(point => `L${point.x} ${point.y}`).join(' ');
+        return `M0 ${chartHeight} ${pathPoints} L${chartWidth} ${chartHeight} Z`;
+    })();
+
+    return (
+        <div className="mt-6 w-full max-w-3xl mx-auto">
+            <div className="flex items-center justify-between px-2">
+                <h4 className="text-slate-200 font-orbitron text-sm tracking-[0.25em] uppercase">E.RATE Timeline</h4>
+                <span className="text-xs text-slate-400 font-mono">Enemies per second</span>
+            </div>
+            <div className="mt-3 bg-slate-900/70 border border-slate-700 rounded-lg px-4 py-6">
+                <div className="relative h-44">
+                    <svg
+                        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                        preserveAspectRatio="none"
+                        className="absolute inset-0 w-full h-full"
+                    >
+                        <defs>
+                            <linearGradient id="rate-area" x1="0" x2="0" y1="0" y2="1">
+                                <stop offset="0%" stopColor="rgba(56,189,248,0.4)" />
+                                <stop offset="100%" stopColor="rgba(56,189,248,0.05)" />
+                            </linearGradient>
+                        </defs>
+                        <line
+                            x1={0}
+                            y1={chartHeight}
+                            x2={chartWidth}
+                            y2={chartHeight}
+                            stroke="rgba(148,163,184,0.4)"
+                            strokeWidth={1}
+                        />
+                        {Array.from({ length: 4 }).map((_, idx) => {
+                            const y = (chartHeight / 4) * (idx + 1);
+                            return (
+                                <line
+                                    key={idx}
+                                    x1={0}
+                                    y1={chartHeight - y}
+                                    x2={chartWidth}
+                                    y2={chartHeight - y}
+                                    stroke="rgba(148,163,184,0.1)"
+                                    strokeWidth={1}
+                                />
+                            );
+                        })}
+                        <path d={areaPath} fill="url(#rate-area)" stroke="none" />
+                        <path d={linePath} fill="none" stroke="rgb(56,189,248)" strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
+                        {points.map((point, idx) => (
+                            <g key={idx}>
+                                <circle cx={point.x} cy={point.y} r={4} fill="rgb(56,189,248)" />
+                                <text
+                                    x={point.x}
+                                    y={Math.max(point.y - 8, 12)}
+                                    textAnchor="middle"
+                                    fontSize="10"
+                                    fontFamily="monospace"
+                                    fill="#E2E8F0"
+                                >
+                                    {point.rate.toFixed(1)}
+                                </text>
+                            </g>
+                        ))}
+                    </svg>
+                </div>
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] font-mono text-slate-400 text-center">
+                    {points.map((point, idx) => (
+                        <div key={idx} className="px-1 py-1 bg-slate-800/60 rounded">
+                            <span className="block text-slate-500 uppercase tracking-[0.2em]">T+{formatSongDuration(segments[idx].start)}</span>
+                            <span className="block text-white text-xs">{segments[idx].enemyRate.toFixed(1)} /s</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SongInfo = ({ metadata, stats, showRateChart = false, onToggleRateChart }: SongInfoProps) => {
+    const hasSegments = Boolean(stats?.segments?.length);
+    return (
+        <div className="flex flex-col items-center justify-center mb-8 p-4 bg-black bg-opacity-20 rounded-lg">
+            {metadata.picture && (
+                <img src={metadata.picture} alt="Album Art" className="w-40 h-40 object-cover rounded-lg shadow-lg mb-4" />
+            )}
+            <h2 className="text-3xl font-bold font-orbitron text-white text-center">{metadata.title}</h2>
+            {stats && (
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-sm font-mono">
+                    <div className="px-4 py-2 rounded-md border border-slate-600 bg-slate-900/60 text-slate-300">
+                        <span className="text-slate-400 mr-2">E.RATE</span>
+                        <span className="text-white font-bold">{stats.enemyRate.toFixed(1)}</span>
+                        <span className="text-slate-500 ml-1 text-xs">/s</span>
+                    </div>
+                    <div className="px-4 py-2 rounded-md border border-slate-600 bg-slate-900/60 text-slate-300">
+                        <span className="text-slate-400 mr-2">ENEMIES</span>
+                        <span className="text-white font-bold">{stats.totalEnemies.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="px-4 py-2 rounded-md border border-slate-600 bg-slate-900/60 text-slate-300">
+                            <span className="text-slate-400 mr-2">SONG</span>
+                            <span className="text-white font-bold">{formatSongDuration(stats.durationSeconds)}</span>
+                        </div>
+                        {hasSegments && onToggleRateChart && (
+                            <button
+                                type="button"
+                                onClick={onToggleRateChart}
+                                aria-pressed={showRateChart}
+                                className={`px-3 py-2 rounded-md border text-xs font-orbitron tracking-[0.2em] transition-colors ${
+                                    showRateChart
+                                        ? 'border-emerald-400 text-emerald-300 bg-emerald-400/10'
+                                        : 'border-sky-500 text-sky-300 hover:bg-sky-500/10'
+                                }`}
+                            >
+                                {showRateChart ? 'Hide Graph' : 'Show Graph'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+            {showRateChart && hasSegments && stats && (
+                <RateChart segments={stats.segments} />
+            )}
+        </div>
+    );
+};
 
 const ItemSelection = ({ onSelect }: { onSelect: (item: ItemType) => void }) => {
     const items: ItemType[] = ['SPEED_UP', 'DIAGONAL_SHOT', 'SIDE_SHOT', 'CANCELLER_SHOT', 'RICOCHET_SHOT', 'ONE_UP', 'BOMB', 'PHASE_SHIELD', 'LASER_BEAM'];
@@ -234,12 +478,67 @@ export default function App(): React.ReactNode {
   const [gameStats, setGameStats] = useState<GameStats | null>(null);
   const [isSuperHardMode, setIsSuperHardMode] = useState(false);
   const [initialItem, setInitialItem] = useState<ItemType | null>(null);
+  const currentMode: DifficultyMode = isSuperHardMode ? 'superHard' : 'normal';
+  const [showRateChart, setShowRateChart] = useState(false);
+  const songStats = useMemo<SongAnalysisStats | null>(() => {
+    if (!lyrics || lyrics.length === 0) return null;
+    const totalEnemies = lyrics.reduce((acc, line) => acc + line.text.replace(/\s/g, '').length, 0);
+    if (totalEnemies === 0) {
+      return {
+        totalEnemies: 0,
+        enemyRate: 0,
+        durationSeconds: 0,
+        segments: [],
+      };
+    }
+    const times = lyrics.map(line => line.time).filter((time) => Number.isFinite(time));
+    const minTime = times.length ? Math.min(...times) : 0;
+    const maxTime = times.length ? Math.max(...times) : 0;
+    const rawDuration = Math.max(maxTime - minTime, 0);
+    const paddedDuration = Math.max(rawDuration + 5, 1); // add buffer for outro
+
+    const targetBuckets = Math.min(Math.max(Math.round(paddedDuration / 18), 4), 12);
+    const segmentDuration = paddedDuration / targetBuckets;
+    const bucketCounts = Array(targetBuckets).fill(0);
+
+    lyrics.forEach(line => {
+      const trimmedLen = line.text.replace(/\s/g, '').length;
+      if (!trimmedLen) return;
+      const relativeTime = line.time - minTime;
+      const bucketIndex = Math.min(
+        targetBuckets - 1,
+        Math.max(0, Math.floor(relativeTime / segmentDuration))
+      );
+      bucketCounts[bucketIndex] += trimmedLen;
+    });
+
+    const segments: RateSegment[] = bucketCounts.map((count, idx) => {
+      const start = idx * segmentDuration;
+      const end = (idx + 1) * segmentDuration;
+      const segmentRate = count / segmentDuration;
+      return {
+        start,
+        end,
+        enemyRate: segmentRate,
+      };
+    });
+
+    const enemyRate = totalEnemies / paddedDuration;
+    return { totalEnemies, enemyRate, durationSeconds: paddedDuration, segments };
+  }, [lyrics]);
+
+  useEffect(() => {
+    if (!songStats) {
+      setShowRateChart(false);
+    }
+  }, [songStats]);
 
   const handleFilesLoaded = useCallback((audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => {
     setAudioUrl(audioUrl);
     setLyrics(lyrics);
     setMetadata(metadata);
     setGameStatus('ready');
+    setShowRateChart(false);
   }, []);
 
   useEffect(() => {
@@ -265,35 +564,6 @@ export default function App(): React.ReactNode {
   }, []);
 
   useEffect(() => {
-    if (gameStatus !== 'ready' || isSuperHardMode) return;
-
-    const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-    let keySequence: string[] = [];
-
-    const handler = (e: KeyboardEvent) => {
-      if (gameStatus !== 'ready') return;
-      keySequence.push(e.key.toLowerCase());
-      keySequence = keySequence.slice(-konamiCode.length);
-      
-      let match = true;
-      for(let i = 0; i < konamiCode.length; i++) {
-        if(keySequence[i] !== konamiCode[i].toLowerCase()) {
-          match = false;
-          break;
-        }
-      }
-
-      if (match) {
-        setIsSuperHardMode(true);
-        keySequence = [];
-      }
-    };
-    
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [gameStatus, isSuperHardMode]);
-
-  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Tab') {
         e.preventDefault();
@@ -306,9 +576,14 @@ export default function App(): React.ReactNode {
 
   const handleGameStart = useCallback((item?: ItemType) => {
     if (audioUrl && lyrics) {
+      if (isSuperHardMode && !item) {
+        return;
+      }
       setGameStats(null);
-      if(isSuperHardMode && item) {
+      if (isSuperHardMode && item) {
         setInitialItem(item);
+      } else if (!isSuperHardMode) {
+        setInitialItem(null);
       }
       setGameStatus('playing');
     }
@@ -333,6 +608,17 @@ export default function App(): React.ReactNode {
     setGameStats(null);
     setIsSuperHardMode(false);
     setInitialItem(null);
+    setShowRateChart(false);
+  }, []);
+
+  const handleModeChange = useCallback((mode: DifficultyMode) => {
+    const enableSuperHard = mode === 'superHard';
+    setIsSuperHardMode(enableSuperHard);
+    setInitialItem(null);
+  }, []);
+
+  const toggleRateChart = useCallback(() => {
+    setShowRateChart(prev => !prev);
   }, []);
 
 
@@ -346,20 +632,32 @@ export default function App(): React.ReactNode {
             <h1 className="text-5xl font-bold font-orbitron mb-4 text-shadow-neon">
                 {isSuperHardMode ? <span className="text-red-500 animate-pulse">SUPER HARD MODE</span> : 'LYRIC SHOOTER'}
             </h1>
-            {metadata ? <SongInfo metadata={metadata} /> : <p className="mb-8 text-sky-300">Files loaded. Are you ready?</p>}
-            
+            {metadata ? (
+              <SongInfo
+                metadata={metadata}
+                stats={songStats}
+                showRateChart={showRateChart}
+                onToggleRateChart={toggleRateChart}
+              />
+            ) : (
+              <p className="mb-8 text-sky-300">Files loaded. Are you ready?</p>
+            )}
+
+            <DifficultyTabs mode={currentMode} onChange={handleModeChange} />
+            <DifficultyDetails mode={currentMode} />
+
             {isSuperHardMode ? (
               <ItemSelection onSelect={handleGameStart} />
             ) : (
               <button
                 onClick={() => handleGameStart()}
-                className="px-8 py-4 bg-sky-500 text-white font-bold rounded-lg hover:bg-sky-400 transition-all duration-300 text-2xl font-orbitron box-shadow-neon"
+                className="mt-6 px-8 py-4 bg-sky-500 text-white font-bold rounded-lg hover:bg-sky-400 transition-all duration-300 text-2xl font-orbitron box-shadow-neon"
               >
                 START GAME
               </button>
             )}
 
-             <button
+            <button
               onClick={resetToUploader}
               className="mt-4 block mx-auto px-4 py-2 bg-slate-600 text-white font-bold rounded-lg hover:bg-slate-500 transition-all duration-300"
             >

@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseLRC } from '@/services/lrcParser';
 import type { ITunesTrack } from '@/services/api';
 import { searchSongs, downloadByAppleMusicUrl } from '@/services/api';
 import type { LyricLine, SongMetadata } from '@/types';
 import { getCookie, setCookie } from '@/services/cookies';
+import { PreviewPlayIcon } from '@/components/icons';
 
 interface SearchPanelProps {
   onLoaded: (audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => void;
@@ -24,6 +25,8 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<ITunesTrack[] | null>(null);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const [previewingId, setPreviewingId] = useState<number | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const canSearch = useMemo(() => q.trim().length > 0 && !loading, [q, loading]);
 
@@ -37,6 +40,16 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
   useEffect(() => {
     setCookie('LS_COUNTRY', country, 365);
   }, [country]);
+
+  const stopPreview = useCallback(() => {
+    const audio = previewAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+      previewAudioRef.current = null;
+    }
+    setPreviewingId(null);
+  }, []);
 
   const doSearch = useCallback(async () => {
     if (!canSearch) return;
@@ -54,6 +67,7 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
   }, [q, country, canSearch]);
 
   const handlePlay = useCallback(async (t: ITunesTrack) => {
+    stopPreview();
     if (!t.trackViewUrl) return;
     setDownloadingId(t.trackId);
     setError(null);
@@ -76,7 +90,41 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
     } finally {
       setDownloadingId(null);
     }
-  }, [onLoaded]);
+  }, [onLoaded, stopPreview]);
+
+  const handlePreview = useCallback((track: ITunesTrack) => {
+    if (!track.previewUrl) return;
+
+    if (previewingId === track.trackId) {
+      stopPreview();
+      return;
+    }
+
+    stopPreview();
+
+    const audio = new Audio(track.previewUrl);
+    previewAudioRef.current = audio;
+    setPreviewingId(track.trackId);
+
+    const clearStatus = () => {
+      if (previewAudioRef.current === audio) {
+        previewAudioRef.current = null;
+      }
+      setPreviewingId(null);
+      audio.removeEventListener('ended', clearStatus);
+      audio.removeEventListener('error', clearStatus);
+    };
+
+    audio.volume = 0.85;
+    audio.addEventListener('ended', clearStatus);
+    audio.addEventListener('error', clearStatus);
+    audio.play().catch(() => {
+      clearStatus();
+      setError('Preview playback failed.');
+    });
+  }, [previewingId, stopPreview]);
+
+  useEffect(() => stopPreview, [stopPreview]);
 
   return (
     <div className="w-full max-w-2xl p-8 space-y-6 bg-slate-800 rounded-2xl shadow-2xl">
@@ -131,13 +179,30 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
                 <div className="text-slate-400 text-sm truncate">{t.artistName}</div>
                 <div className="text-slate-500 text-xs">{msToTime(t.trackTimeMillis)}</div>
               </div>
-              <button
-                onClick={() => handlePlay(t)}
-                disabled={downloadingId === t.trackId}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded disabled:bg-slate-600"
-              >
-                {downloadingId === t.trackId ? 'Loading...' : 'Play'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePreview(t)}
+                  disabled={!t.previewUrl}
+                  title={t.previewUrl ? (previewingId === t.trackId ? '試聴を停止' : '試聴する') : '試聴できません'}
+                  aria-label={t.previewUrl ? (previewingId === t.trackId ? 'Stop preview' : 'Play preview') : 'Preview unavailable'}
+                  className={`p-2 transition-colors ${
+                    previewingId === t.trackId
+                      ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.75)]'
+                      : 'text-sky-300 hover:text-white'
+                  } disabled:text-slate-500`}
+                >
+                  <PreviewPlayIcon className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePlay(t)}
+                  disabled={downloadingId === t.trackId}
+                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded disabled:bg-slate-600"
+                >
+                  {downloadingId === t.trackId ? 'Loading...' : 'Play'}
+                </button>
+              </div>
             </li>
           ))}
         </ul>

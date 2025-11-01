@@ -7,33 +7,13 @@ import {
   EnemyProjectile,
   Explosion,
   Mine,
+  GameState,
+  PlayerSnapshot,
 } from '@/types';
 
 interface Pool<T> {
   get(): T;
   release(obj: T): void;
-}
-
-interface GameState {
-  enemies: Enemy[];
-  pendingSpawns: { time: number; char: string; progress: number }[];
-  pendingSpawnCursor: number;
-  totalEnemiesSpawned: number;
-  gameStartTime: number;
-  lastSpawnRateUpdate: number;
-  currentEnemySpawnRate: number;
-  baseShooterChance: number;
-  isMidGameBuffActive: boolean;
-  enemyProjectileSpeedMultiplier: number;
-  mines: Mine[];
-  [key: string]: any;
-}
-
-interface PlayerSnapshot {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 interface EnemyManagerContext {
@@ -287,8 +267,13 @@ class EnemyManager {
       if (!enemy.isShooter) continue;
       if (enemy.attackPattern === 'BEAT') continue;
 
+      if (enemy.gatlingCooldownUntil && currentTime >= enemy.gatlingCooldownUntil) {
+        enemy.gatlingCooldownUntil = undefined;
+      }
+
       const cooldown = enemy.isElite && enemy.eliteType === 'MAGIC' ? ENEMY_FIRE_COOLDOWN / 3.5 : ENEMY_FIRE_COOLDOWN;
-      if (currentTime - (enemy.lastShotTime || 0) <= cooldown || enemy.gatlingCooldown) continue;
+      const gatlingOnCooldown = enemy.gatlingCooldownUntil !== undefined && currentTime < enemy.gatlingCooldownUntil;
+      if (currentTime - (enemy.lastShotTime || 0) <= cooldown || gatlingOnCooldown) continue;
 
       const projectileBase = {
         x: enemy.x + enemy.width / 2,
@@ -359,7 +344,7 @@ class EnemyManager {
               patternToFire = 'STRAIGHT_DOWN';
               enemy.gatlingBurstCount = 5;
               enemy.gatlingLastBurstTime = currentTime;
-              enemy.gatlingCooldown = true;
+              enemy.gatlingCooldownUntil = undefined;
             }
             this.fireProjectileByPattern(
               enemy,
@@ -589,13 +574,14 @@ class EnemyManager {
   }
 
   private handleGatlingBursts(currentTime: number, projectileSpeed: number): void {
+    const { ENEMY_FIRE_COOLDOWN } = this.constants;
     const enemies = this.state.enemies;
     for (let i = 0; i < enemies.length; i++) {
       const enemy = enemies[i];
-      if (!enemy.gatlingCooldown || !enemy.gatlingBurstCount || enemy.gatlingBurstCount <= 0) continue;
+      if (!enemy.gatlingBurstCount || enemy.gatlingBurstCount <= 0) continue;
       if (currentTime - (enemy.gatlingLastBurstTime ?? 0) <= 100) continue;
 
-      enemy.gatlingBurstCount--;
+      enemy.gatlingBurstCount = Math.max((enemy.gatlingBurstCount ?? 0) - 1, 0);
       enemy.gatlingLastBurstTime = currentTime;
 
       const proj = this.enemyProjectilePool.get();
@@ -610,13 +596,11 @@ class EnemyManager {
       this.state.enemyProjectiles.push(proj);
 
       if (enemy.gatlingBurstCount === 0) {
-        setTimeout(() => {
-          enemy.gatlingCooldown = false;
-        }, this.constants.ENEMY_FIRE_COOLDOWN);
+        enemy.gatlingCooldownUntil = currentTime + ENEMY_FIRE_COOLDOWN;
+        enemy.gatlingLastBurstTime = undefined;
       }
     }
   }
 }
 
 export default EnemyManager;
-export type { GameState, PlayerSnapshot };

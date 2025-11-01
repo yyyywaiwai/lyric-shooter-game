@@ -1,6 +1,6 @@
 import GameConstants from '@/services/gameConstants';
 import { filterInPlace } from '@/services/collectionUtils';
-import EnemyManager, { GameState, PlayerSnapshot } from '@/services/enemyManager';
+import EnemyManager from '@/services/enemyManager';
 import {
   Enemy,
   Projectile,
@@ -8,6 +8,8 @@ import {
   Mine,
   Explosion,
   GameObject,
+  GameState,
+  PlayerSnapshot,
 } from '@/types';
 
 interface Pool<T> {
@@ -440,7 +442,7 @@ class ProjectileManager {
           projectile.x + projectile.width > enemy.x &&
           projectile.y < enemy.y + enemy.height &&
           projectile.y + projectile.height > enemy.y
-        ) {
+          enemy.hp = (enemy.hp ?? 1) - 1;
           hitProjectiles.add(projectile);
           enemy.hp!--;
           enemy.isFlashing = true;

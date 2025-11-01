@@ -648,28 +648,30 @@ export default function GameScreen({ audioUrl, lyrics, onEndGame, superHardMode 
       oscillator.stop(audioContext.currentTime + 0.2);
   }, []);
 
-  enemyManager.initialize({
-    state: gameStateRef.current,
-    generateId,
-    superHardMode,
-    enemyProjectilePool: enemyProjectilePool.current,
-    explosionPool: explosionPool.current,
-  });
-  projectileManager.initialize({
-    state: gameStateRef.current,
-    generateId,
-    projectilePool: projectilePool.current,
-    enemyProjectilePool: enemyProjectilePool.current,
-    explosionPool: explosionPool.current,
-    enemyManager,
-    playCancelSound,
-  });
-  itemManager.initialize({
-    state: gameStateRef.current,
-    generateId,
-    playCancelSound,
-    superHardMode,
-  });
+  useEffect(() => {
+    enemyManager.initialize({
+      state: gameStateRef.current,
+      generateId,
+      superHardMode,
+      enemyProjectilePool: enemyProjectilePool.current,
+      explosionPool: explosionPool.current,
+    });
+    projectileManager.initialize({
+      state: gameStateRef.current,
+      generateId,
+      projectilePool: projectilePool.current,
+      enemyProjectilePool: enemyProjectilePool.current,
+      explosionPool: explosionPool.current,
+      enemyManager,
+      playCancelSound,
+    });
+    itemManager.initialize({
+      state: gameStateRef.current,
+      generateId,
+      playCancelSound,
+      superHardMode,
+    });
+  }, [enemyManager, projectileManager, itemManager, generateId, superHardMode, playCancelSound]);
 
   const fadeOutBgm = useCallback((duration: number) => {
       const gainNode = bgmGainRef.current;

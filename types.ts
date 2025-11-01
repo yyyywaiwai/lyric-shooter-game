@@ -15,6 +15,13 @@ export interface GameObject {
   __gridMark?: number;
 }
 
+export interface PlayerSnapshot {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type MovementPattern = 'STRAIGHT_DOWN' | 'SINE_WAVE' | 'ZIG_ZAG' | 'DRIFTING' | 'ACCELERATING';
 export type ShooterAttackPattern =
   | 'HOMING'
@@ -44,7 +51,7 @@ export interface Enemy extends GameObject {
   flashEndTime?: number;
   gatlingBurstCount?: number;
   gatlingLastBurstTime?: number;
-  gatlingCooldown?: boolean;
+  gatlingCooldownUntil?: number;
 
   // Laser properties
   laserState?: 'IDLE' | 'AIMING' | 'FIRING' | 'COOLDOWN';
@@ -139,9 +146,71 @@ export interface Explosion {
 export interface FloatingText {
     id: number;
     x: number;
-    y: number;
-    text: string;
-    createdAt: number;
+   y: number;
+   text: string;
+   createdAt: number;
+}
+
+export interface PendingSpawn {
+  time: number;
+  char: string;
+  progress: number;
+}
+
+export interface GameState {
+  playerX: number;
+  playerY: number;
+  lives: number;
+  isInvincible: boolean;
+  invincibilityEndTime: number;
+  isRespawning: boolean;
+  respawnEndTime: number;
+  projectiles: Projectile[];
+  enemyProjectiles: EnemyProjectile[];
+  playerSpeedMultiplier: number;
+  projectileSpeedMultiplier: number;
+  speedUpCount: number;
+  hasDiagonalShot: boolean;
+  hasSideShot: boolean;
+  hasCancellerShot: boolean;
+  hasRicochetShot: boolean;
+  ricochetStacks: number;
+  mainShotCounter: number;
+  stockedItem: SpecialWeapon | null;
+  stockedItemActiveUntil: number;
+  isLaserActive: boolean;
+  laserEndTime: number;
+  isPhaseShieldActive: boolean;
+  phaseShieldEndTime: number;
+  enemies: Enemy[];
+  items: Item[];
+  mines: Mine[];
+  explosions: Explosion[];
+  floatingTexts: FloatingText[];
+  score: number;
+  enemiesDefeated: number;
+  itemsCollected: Partial<Record<ItemType, number>>;
+  currentLyricIndex: number;
+  baseShooterChance: number;
+  difficultyMilestone: number;
+  isGameEnding: boolean;
+  showSkip: boolean;
+  spacePressProgress: number;
+  totalEnemiesSpawned: number;
+  gameStartTime: number;
+  currentEnemySpawnRate: number;
+  lastSpawnRateUpdate: number;
+  isMidGameBuffActive: boolean;
+  enemyProjectileSpeedMultiplier: number;
+  isGameOverDelayed: boolean;
+  gameOverDelayEndTime: number;
+  shouldHidePlayer: boolean;
+  showGameOverText: boolean;
+  backspacePressStart: number;
+  backspacePressProgress: number;
+  fps: number;
+  pendingSpawns: PendingSpawn[];
+  pendingSpawnCursor: number;
 }
 
 export type GameStatus = 'loading' | 'ready' | 'playing' | 'gameOver' | 'cleared';

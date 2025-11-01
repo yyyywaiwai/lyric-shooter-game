@@ -290,12 +290,25 @@ interface SongInfoProps {
 
 const RateChart = ({ segments }: { segments: RateSegment[] }) => {
     if (!segments.length) return null;
-    const maxRate = segments.reduce((max, seg) => Math.max(max, seg.enemyRate), 0);
-    const safeMax = maxRate > 0 ? maxRate : 1;
     const count = segments.length;
     const chartHeight = 140;
     const baseWidth = 80;
     const chartWidth = count > 1 ? (count - 1) * baseWidth : baseWidth;
+
+    const cumulativeEnemiesPerSegment = segments.map(seg => seg.enemyRate * Math.max(seg.end - seg.start, 0));
+    const cumulativeOverallRates: number[] = [];
+    let enemySum = 0;
+
+    segments.forEach((segment, idx) => {
+        enemySum += cumulativeEnemiesPerSegment[idx];
+        const elapsed = Math.max(segment.end, 0.0001);
+        const averageRate = enemySum / elapsed;
+        cumulativeOverallRates.push(averageRate);
+    });
+
+    const maxSegmentRate = segments.reduce((max, seg) => Math.max(max, seg.enemyRate), 0);
+    const maxOverallRate = cumulativeOverallRates.reduce((max, rate) => Math.max(max, rate), 0);
+    const safeMax = Math.max(maxSegmentRate, maxOverallRate, 1);
 
     const points = segments.map((seg, idx) => {
         const x = count > 1 ? (chartWidth / (count - 1)) * idx : chartWidth / 2;
@@ -303,18 +316,28 @@ const RateChart = ({ segments }: { segments: RateSegment[] }) => {
         return { x, y, rate: seg.enemyRate, label: formatSongDuration(seg.start) };
     });
 
-    const linePath = (() => {
-        if (count === 1) {
-            const y = points[0].y;
+    const overallPoints = points.map((point, idx) => {
+        const overallRate = cumulativeOverallRates[idx];
+        const y = chartHeight - (overallRate / safeMax) * chartHeight;
+        return { x: point.x, y, rate: overallRate };
+    });
+
+    const buildLinePath = (pts: { x: number; y: number }[]) => {
+        if (!pts.length) return '';
+        if (pts.length === 1) {
+            const y = pts[0].y;
             return `M0 ${y} L${chartWidth} ${y}`;
         }
-        return points
+        return pts
             .map((point, idx) => `${idx === 0 ? 'M' : 'L'}${point.x} ${point.y}`)
             .join(' ');
-    })();
+    };
+
+    const linePath = buildLinePath(points);
+    const overallLinePath = buildLinePath(overallPoints);
 
     const areaPath = (() => {
-        if (count === 1) {
+        if (points.length === 1) {
             const y = points[0].y;
             return `M0 ${chartHeight} L0 ${y} L${chartWidth} ${y} L${chartWidth} ${chartHeight} Z`;
         }
@@ -330,6 +353,16 @@ const RateChart = ({ segments }: { segments: RateSegment[] }) => {
             </div>
             <div className="mt-3 bg-slate-900/70 border border-slate-700 rounded-lg px-4 py-6">
                 <div className="relative h-44">
+                    <div className="absolute right-0 top-0 flex gap-4 text-[10px] font-mono text-slate-400">
+                        <span className="flex items-center gap-1">
+                            <span className="inline-block h-[3px] w-4 rounded-full bg-sky-300" />
+                            Segmented
+                        </span>
+                        <span className="flex items-center gap-1">
+                            <span className="inline-block h-[3px] w-4 rounded-full bg-yellow-300" />
+                            Overall
+                        </span>
+                    </div>
                     <svg
                         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                         preserveAspectRatio="none"
@@ -364,9 +397,24 @@ const RateChart = ({ segments }: { segments: RateSegment[] }) => {
                             );
                         })}
                         <path d={areaPath} fill="url(#rate-area)" stroke="none" />
-                        <path d={linePath} fill="none" stroke="rgb(56,189,248)" strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
+                        <path
+                            d={linePath}
+                            fill="none"
+                            stroke="rgb(56,189,248)"
+                            strokeWidth={3}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                        />
+                        <path
+                            d={overallLinePath}
+                            fill="none"
+                            stroke="rgba(250,204,21,0.9)"
+                            strokeWidth={2.5}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                        />
                         {points.map((point, idx) => (
-                            <g key={idx}>
+                            <g key={`seg-${idx}`}>
                                 <circle cx={point.x} cy={point.y} r={4} fill="rgb(56,189,248)" />
                                 <text
                                     x={point.x}
@@ -379,6 +427,17 @@ const RateChart = ({ segments }: { segments: RateSegment[] }) => {
                                     {point.rate.toFixed(1)}
                                 </text>
                             </g>
+                        ))}
+                        {overallPoints.map((point, idx) => (
+                            <circle
+                                key={`overall-${idx}`}
+                                cx={point.x}
+                                cy={point.y}
+                                r={3.5}
+                                fill="rgba(250,224,120,0.9)"
+                                stroke="rgba(250,204,21,0.9)"
+                                strokeWidth={1}
+                            />
                         ))}
                     </svg>
                 </div>

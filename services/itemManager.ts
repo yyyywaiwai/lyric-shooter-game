@@ -1,7 +1,6 @@
 import GameConstants from '@/services/gameConstants';
 import { filterInPlace } from '@/services/collectionUtils';
-import { GameState, PlayerSnapshot } from '@/services/enemyManager';
-import { Item, ItemType, SpecialWeapon } from '@/types';
+import { GameState, PlayerSnapshot, Item, ItemType, SpecialWeapon } from '@/types';
 
 interface ItemManagerContext {
   state: GameState;

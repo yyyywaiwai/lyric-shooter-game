@@ -494,6 +494,7 @@ class ProjectileManager {
           enemy.y + enemy.height >= 0;
         if (intersects) {
           this.state.score += 5;
+          this.state.enemiesDefeated++;
           const explosion = this.explosionPool.get();
           explosion.id = generateId();
           explosion.x = enemy.x + enemy.width / 2;

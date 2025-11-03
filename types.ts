@@ -227,3 +227,15 @@ export interface SongMetadata {
   title: string;
   picture?: string; // base64 data URL
 }
+
+export interface AppleHistoryEntry {
+  trackId: number;
+  url: string;
+  title: string;
+  artist: string;
+  artwork?: string;
+}
+
+export interface LoadedSongContext {
+  appleHistory?: AppleHistoryEntry;
+}

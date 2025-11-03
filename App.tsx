@@ -1,9 +1,10 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { LyricLine, GameStatus, GameStats, ItemType, SongMetadata } from './types';
+import { LyricLine, GameStatus, GameStats, ItemType, SongMetadata, LoadedSongContext } from './types';
 import FileUploader from './components/FileUploader';
 import GameScreen from './components/GameScreen';
 import { BombIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, SpeedUpIcon, SideShotIcon, CancellerShotIcon, RicochetShotIcon, PhaseShieldIcon } from './components/icons';
+import { upsertAppleHistoryEntry } from '@/services/appleHistory';
 
 const MIN_VIEWPORT_WIDTH = 1024;
 const MIN_VIEWPORT_HEIGHT = 720;
@@ -528,6 +529,7 @@ export default function App(): React.ReactNode {
   const [initialItem, setInitialItem] = useState<ItemType | null>(null);
   const currentMode: DifficultyMode = isSuperHardMode ? 'superHard' : 'normal';
   const [showRateChart, setShowRateChart] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const songStats = useMemo<SongAnalysisStats | null>(() => {
     if (!lyrics || lyrics.length === 0) return null;
     const totalEnemies = lyrics.reduce((acc, line) => acc + line.text.replace(/\s/g, '').length, 0);
@@ -581,12 +583,16 @@ export default function App(): React.ReactNode {
     }
   }, [songStats]);
 
-  const handleFilesLoaded = useCallback((audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => {
+  const handleFilesLoaded = useCallback((audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata, context?: LoadedSongContext) => {
     setAudioUrl(audioUrl);
     setLyrics(lyrics);
     setMetadata(metadata);
     setGameStatus('ready');
     setShowRateChart(false);
+    if (context?.appleHistory) {
+      upsertAppleHistoryEntry(context.appleHistory);
+      setHistoryVersion((prev) => prev + 1);
+    }
   }, []);
 
   useEffect(() => {
@@ -674,7 +680,7 @@ export default function App(): React.ReactNode {
   const renderContent = () => {
     switch (gameStatus) {
       case 'loading':
-        return <FileUploader onFilesLoaded={handleFilesLoaded} />;
+        return <FileUploader onFilesLoaded={handleFilesLoaded} historyVersion={historyVersion} />;
       case 'ready':
         return (
           <div className="text-center text-white">

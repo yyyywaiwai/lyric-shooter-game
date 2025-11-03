@@ -22,11 +22,19 @@ const loadJsMediaTags = () => {
   });
 };
 
+import type { LoadedSongContext } from '@/types';
+
 interface FileUploaderProps {
-  onFilesLoaded: (audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => void;
+  onFilesLoaded: (
+    audioUrl: string,
+    lyrics: LyricLine[],
+    metadata: SongMetadata,
+    context?: LoadedSongContext
+  ) => void;
+  historyVersion: number;
 }
 
-export default function FileUploader({ onFilesLoaded }: FileUploaderProps): React.ReactNode {
+export default function FileUploader({ onFilesLoaded, historyVersion }: FileUploaderProps): React.ReactNode {
   const [m4aFile, setM4aFile] = useState<File | null>(null);
   const [lrcFile, setLrcFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +172,7 @@ export default function FileUploader({ onFilesLoaded }: FileUploaderProps): Reac
       </div>
 
       {mode === 'search' ? (
-        <SearchPanel onLoaded={onFilesLoaded} />
+        <SearchPanel onLoaded={onFilesLoaded} historyVersion={historyVersion} />
       ) : (
         <div className="space-y-6">
           {error && <div className="p-4 text-center text-red-300 bg-red-900 bg-opacity-50 rounded-lg">{error}</div>}

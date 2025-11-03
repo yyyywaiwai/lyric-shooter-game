@@ -6,9 +6,21 @@ import type { LyricLine, SongMetadata } from '@/types';
 import { getCookie, setCookie } from '@/services/cookies';
 import { PreviewPlayIcon } from '@/components/icons';
 import GameConstants from '@/services/gameConstants';
+import {
+  AppleHistoryEntry,
+  APPLE_HISTORY_LIMIT,
+  loadAppleHistory,
+} from '@/services/appleHistory';
+import type { LoadedSongContext } from '@/types';
 
 interface SearchPanelProps {
-  onLoaded: (audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => void;
+  onLoaded: (
+    audioUrl: string,
+    lyrics: LyricLine[],
+    metadata: SongMetadata,
+    context?: LoadedSongContext
+  ) => void;
+  historyVersion: number;
 }
 
 function msToTime(ms?: number) {
@@ -19,7 +31,7 @@ function msToTime(ms?: number) {
   return `${m}:${r}`;
 }
 
-export default function SearchPanel({ onLoaded }: SearchPanelProps): React.ReactNode {
+export default function SearchPanel({ onLoaded, historyVersion }: SearchPanelProps): React.ReactNode {
   const { BGM_VOLUME } = GameConstants.getInstance();
   const [q, setQ] = useState('');
   const [country, setCountry] = useState('US');
@@ -29,6 +41,7 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [history, setHistory] = useState<AppleHistoryEntry[]>(() => loadAppleHistory());
 
   const canSearch = useMemo(() => q.trim().length > 0 && !loading, [q, loading]);
 
@@ -42,6 +55,10 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
   useEffect(() => {
     setCookie('LS_COUNTRY', country, 365);
   }, [country]);
+
+  useEffect(() => {
+    setHistory(loadAppleHistory());
+  }, [historyVersion]);
 
   const stopPreview = useCallback(() => {
     const audio = previewAudioRef.current;
@@ -86,13 +103,49 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
         title: `${t.trackName} - ${t.artistName}`,
         picture: artwork,
       };
-      onLoaded(audioDataUrl, lyrics, metadata);
+      const historyEntry: AppleHistoryEntry | undefined = t.trackViewUrl
+        ? {
+            trackId: t.trackId,
+            url: t.trackViewUrl,
+            title: t.trackName,
+            artist: t.artistName,
+            artwork,
+          }
+        : undefined;
+      onLoaded(audioDataUrl, lyrics, metadata, historyEntry ? { appleHistory: historyEntry } : undefined);
     } catch (e: any) {
       setError(e?.message || 'Download failed');
     } finally {
       setDownloadingId(null);
     }
   }, [onLoaded, stopPreview]);
+
+  const handleHistoryPlay = useCallback(
+    async (entry: AppleHistoryEntry) => {
+      stopPreview();
+      setDownloadingId(entry.trackId);
+      setError(null);
+      try {
+        const { audioDataUrl, lrcText } = await downloadByAppleMusicUrl(entry.url);
+        if (!lrcText || !lrcText.trim()) {
+          throw new Error('No synced lyrics were returned for this track.');
+        }
+        const lyrics = parseLRC(lrcText);
+        if (!lyrics.length) throw new Error('No synced lyrics found for this track.');
+        const metadataTitle = entry.artist ? `${entry.title} - ${entry.artist}` : entry.title;
+        const metadata: SongMetadata = {
+          title: metadataTitle,
+          picture: entry.artwork ?? undefined,
+        };
+        onLoaded(audioDataUrl, lyrics, metadata, { appleHistory: entry });
+      } catch (e: any) {
+        setError(e?.message || 'Download failed');
+      } finally {
+        setDownloadingId(null);
+      }
+    },
+    [onLoaded, stopPreview]
+  );
 
   const handlePreview = useCallback((track: ITunesTrack) => {
     if (!track.previewUrl) return;
@@ -167,6 +220,52 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
 
       {error && (
         <div className="p-3 text-red-300 bg-red-900/50 rounded">{error}</div>
+      )}
+
+      {history.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
+              Recent Apple Music Plays
+            </h3>
+            <span className="text-xs text-slate-500">
+              {Math.min(history.length, APPLE_HISTORY_LIMIT)} / {APPLE_HISTORY_LIMIT}
+            </span>
+          </div>
+          <ul className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+            {history.map((entry) => (
+              <li
+                key={entry.trackId}
+                className="flex items-center gap-3 p-3 bg-slate-900 rounded border border-slate-700"
+              >
+                {entry.artwork ? (
+                  <img src={entry.artwork} alt="artwork" className="w-16 h-16 rounded" />
+                ) : (
+                  <div className="w-16 h-16 rounded bg-slate-700 flex items-center justify-center text-slate-400 text-xs uppercase tracking-wide">
+                    No Art
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="text-white font-semibold truncate"
+                    title={entry.artist ? `${entry.title} - ${entry.artist}` : entry.title}
+                  >
+                    {entry.title}
+                  </div>
+                  {entry.artist && <div className="text-slate-400 text-sm truncate">{entry.artist}</div>}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleHistoryPlay(entry)}
+                  disabled={downloadingId === entry.trackId}
+                  className="px-3 py-2 font-bold rounded bg-emerald-600 text-white disabled:bg-emerald-900/60 hover:bg-emerald-500 transition-colors"
+                >
+                  {downloadingId === entry.trackId ? 'Loading...' : 'Play'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {results && (

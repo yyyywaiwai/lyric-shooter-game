@@ -5,34 +5,24 @@ import FileUploader from './components/FileUploader';
 import GameScreen from './components/GameScreen';
 import { BombIcon, DiagonalShotIcon, LaserIcon, OneUpIcon, SpeedUpIcon, SideShotIcon, CancellerShotIcon, RicochetShotIcon, PhaseShieldIcon } from './components/icons';
 
-const NON_DESKTOP_TERMS = [
-  'android',
-  'iphone',
-  'ipad',
-  'ipod',
-  'windows phone',
-  'mobile',
-  'tablet',
-  'webos',
-  'blackberry',
-  'bb10',
-  'playbook',
-  'silk',
-  'kindle',
-  'opera mini',
-  'opera mobi'
-];
-
-const detectDesktop = (): boolean => {
-  if (typeof navigator === 'undefined') return true;
-  const ua = (navigator.userAgent || '').toLowerCase();
-  const isTouchMac = ua.includes('macintosh') && navigator.maxTouchPoints > 1;
-  const isNonDesktopByUa = NON_DESKTOP_TERMS.some(term => ua.includes(term));
-  return !(isNonDesktopByUa || isTouchMac);
-};
-
 const MIN_VIEWPORT_WIDTH = 1024;
 const MIN_VIEWPORT_HEIGHT = 720;
+
+const sanitizeVersionPart = (value: string) => {
+  if (!value) return '';
+  const trimmed = value.trim();
+  return trimmed === 'unknown' ? '' : trimmed;
+};
+
+const APP_VERSION_DISPLAY = (() => {
+  const combinedRaw = (process.env.APP_VERSION as string | undefined) ?? '';
+  const combined = sanitizeVersionPart(combinedRaw);
+  if (combined) return combined;
+  const hash = sanitizeVersionPart((process.env.APP_VERSION_HASH as string | undefined) ?? '');
+  const message = sanitizeVersionPart((process.env.APP_VERSION_MESSAGE as string | undefined) ?? '');
+  const parts = [hash, message].filter(Boolean);
+  return parts.join(' - ');
+})();
 
 const InfoPanel = () => (
     <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8 max-w-4xl mx-auto p-4 bg-slate-800 bg-opacity-70 rounded-lg text-left">
@@ -525,7 +515,6 @@ const ItemSelection = ({ onSelect }: { onSelect: (item: ItemType) => void }) => 
 };
 
 export default function App(): React.ReactNode {
-  const [isDesktop, setIsDesktop] = useState<boolean>(() => detectDesktop());
   const [isWindowLargeEnough, setIsWindowLargeEnough] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return window.innerWidth >= MIN_VIEWPORT_WIDTH && window.innerHeight >= MIN_VIEWPORT_HEIGHT;
@@ -605,7 +594,6 @@ export default function App(): React.ReactNode {
     let rafId = 0;
     const updateLayoutState = () => {
       rafId = 0;
-      setIsDesktop(detectDesktop());
       setIsWindowLargeEnough(window.innerWidth >= MIN_VIEWPORT_WIDTH && window.innerHeight >= MIN_VIEWPORT_HEIGHT);
     };
     const handleResize = () => {
@@ -679,6 +667,8 @@ export default function App(): React.ReactNode {
   const toggleRateChart = useCallback(() => {
     setShowRateChart(prev => !prev);
   }, []);
+
+  const shouldShowVersionBadge = Boolean(APP_VERSION_DISPLAY) && gameStatus === 'loading';
 
 
   const renderContent = () => {
@@ -760,23 +750,9 @@ export default function App(): React.ReactNode {
     }
   };
 
-  if (!isDesktop) {
-    return (
-      <main className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
-        <div className="max-w-md w-full text-center text-white bg-black bg-opacity-70 p-8 rounded-2xl space-y-4">
-          <h1 className="text-3xl font-orbitron text-sky-300">Desktop Only</h1>
-          <p className="text-slate-200 leading-relaxed">
-            This game relies on keyboard controls and mouse precision. Please come back on a desktop computer to play.
-          </p>
-          <p className="text-slate-400 text-sm">Touch devices are not supported at this time.</p>
-        </div>
-      </main>
-    );
-  }
-
   if (!isWindowLargeEnough) {
     return (
-      <main className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+      <main className="relative min-h-screen bg-slate-900 flex items-center justify-center p-6">
         <div className="max-w-md w-full text-center text-white bg-black bg-opacity-70 p-8 rounded-2xl space-y-4">
           <h1 className="text-3xl font-orbitron text-amber-300">Make The Window Larger</h1>
           <p className="text-slate-200 leading-relaxed">
@@ -784,13 +760,23 @@ export default function App(): React.ReactNode {
           </p>
           <p className="text-slate-400 text-sm">Tip: Fullscreen (F11) usually provides enough room.</p>
         </div>
+        {shouldShowVersionBadge && (
+          <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-slate-400 font-mono opacity-75">
+            Version: {APP_VERSION_DISPLAY}
+          </div>
+        )}
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+    <main className="relative min-h-screen bg-slate-900 flex items-center justify-center p-4">
       {renderContent()}
+      {shouldShowVersionBadge && (
+        <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-slate-400 font-mono opacity-75">
+          Version: {APP_VERSION_DISPLAY}
+        </div>
+      )}
     </main>
   );
 }

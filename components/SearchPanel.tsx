@@ -5,6 +5,7 @@ import { searchSongs, downloadByAppleMusicUrl } from '@/services/api';
 import type { LyricLine, SongMetadata } from '@/types';
 import { getCookie, setCookie } from '@/services/cookies';
 import { PreviewPlayIcon } from '@/components/icons';
+import GameConstants from '@/services/gameConstants';
 
 interface SearchPanelProps {
   onLoaded: (audioUrl: string, lyrics: LyricLine[], metadata: SongMetadata) => void;
@@ -19,6 +20,7 @@ function msToTime(ms?: number) {
 }
 
 export default function SearchPanel({ onLoaded }: SearchPanelProps): React.ReactNode {
+  const { BGM_VOLUME } = GameConstants.getInstance();
   const [q, setQ] = useState('');
   const [country, setCountry] = useState('US');
   const [loading, setLoading] = useState(false);
@@ -115,7 +117,7 @@ export default function SearchPanel({ onLoaded }: SearchPanelProps): React.React
       audio.removeEventListener('error', clearStatus);
     };
 
-    audio.volume = 0.85;
+    audio.volume = BGM_VOLUME;
     audio.addEventListener('ended', clearStatus);
     audio.addEventListener('error', clearStatus);
     audio.play().catch(() => {
